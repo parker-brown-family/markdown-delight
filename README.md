@@ -38,15 +38,28 @@ Open <http://localhost:4323>. Deep-link a theme: `?theme=tactical-overdrive&seed
 
 No build step. Pure ES modules + CSS custom properties.
 
-## Run the native spike
+## Build the native app
+
+The app consumes `gpui` from a **pinned Zed checkout** as a sibling directory
+(path deps in `app/Cargo.toml`), carrying a small Apache-2.0-compatible render
+patch (`td-crt-pass`) for the per-pane CRT barrel warp:
 
 ```bash
+# one-time: the pinned gpui source, beside this repo
+git clone https://github.com/zed-industries/zed ../zed-upstream
+# (our exact pin + the td-crt-pass warp patch: see terminal-delight/docs)
+
 cd app
-cargo run            # opens a GPUI window, renders a .md file's text in the hacker palette
-cargo run -- README.md
+cargo run -- README.md     # tabs · splits · edit-by-default · full CRT
+cargo build --release
+../scripts/make-default.sh # become the system default .md handler (+icon)
 ```
-Requires the sibling `../zed-upstream` checkout (the pinned `gpui` source). See
-`app/Cargo.toml`.
+
+Keys: `ctrl+e` source↔preview · `ctrl+s` save · `ctrl+alt+r`/`ctrl+alt+d`
+split right/down · `ctrl+shift+t` new tab · `ctrl+pgup/pgdn` switch tab ·
+`alt+arrows` pane focus · `ctrl+w` close pane · right-click tab: rename.
+Click places the cursor; the live theme file is
+`~/.config/markdown-delight/theme.toml` (hot-reloads while running).
 
 ## What works today
 
@@ -97,5 +110,7 @@ trigger · 4 icon themes with tooltips · seed-colour wheel + swatches with a De
 
 ## License
 
-MIT.
+MIT — see [`LICENSE`](LICENSE). Third-party attributions:
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). Zed's GPL editor crates
+are study-only and never linked (clean-room boundary, `docs/PLAN.md` §2).
 </content>

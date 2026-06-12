@@ -128,6 +128,13 @@ impl Editor {
         self.rope.to_string()
     }
 
+    /// Place the cursor at (line, col), clamped to the buffer.
+    pub fn set_cursor(&mut self, line: usize, col: usize) {
+        let line = line.min(self.rope.len_lines().saturating_sub(1));
+        self.cursor = self.rope.line_to_char(line) + col.min(self.line_len(line));
+        self.goal_col = None;
+    }
+
     /// Atomic save: write a sibling temp file, then rename over the target —
     /// a crash mid-write can never destroy the original (PLAN.md D4).
     pub fn save(&mut self, path: &Path) -> io::Result<()> {

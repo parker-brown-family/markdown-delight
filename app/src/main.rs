@@ -1,44 +1,536 @@
-//! markdown-delight viewer — the monitor-wrap build (parity with
-//! terminal-delight's native chrome): a MASTER monitor frame around the
-//! workspace, the document screen in its own little sub-monitor frame,
-//! canvas-painted scanlines + occasional tracking sweeps + flicker bursts +
-//! vertical-hold jiggle (crt::Fx), real inset-shadow curved-glass vignette,
-//! barrel warp via the shared td-crt-pass renderer patch, and a hot-reloaded
-//! theme.toml (edit ~/.config/markdown-delight/theme.toml live).
+//! markdown-delight — tabs · tiling splits · monitor-wrap chrome, ported from
+//! terminal-delight's proven workspace (the sibling, MIT).
 //!
-//! comrak parses ONCE into owned blocks (render.rs); frames rebuild elements
-//! from the cache, so none of the animation re-parses the document.
+//! Splits divide ONLY the focused pane's space (true tiling tree). All panes
+//! in a tab share ONE document: split a source pane and the new pane opens as
+//! a LIVE PREVIEW of the same buffer — it re-renders as you type.
 //!
-//!   cargo run                 # built-in sample
-//!   cargo run -- README.md    # renders that file
+//! ctrl+shift+t / [+]: new tab · ctrl+pgup/pgdn: switch tab · right-click
+//! tab: rename · ctrl+alt+r / [▥]: split right · ctrl+alt+d / [▤]: split
+//! down · alt+arrows: pane focus · ctrl+w: close pane · ctrl+e: source ↔
+//! preview · ctrl+s: save. Opens in SOURCE mode: right-click → open → type.
 
 mod crt;
 mod editor;
+mod pane;
 mod render;
 mod theme;
 mod warp;
 
-use std::{env, fs, path::PathBuf, time::Duration};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::{env, fs, path::PathBuf};
 
 use gpui::{
-    BoxShadow, Context, FocusHandle, Focusable, HighlightStyle, Hsla, KeyDownEvent, SharedString,
-    StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla,
-    linear_color_stop, linear_gradient, point, prelude::*, px, size, white,
+    App, Bounds, BoxShadow, Context, Entity, EntityId, Focusable, Hsla, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, canvas, div, hsla, linear_color_stop, linear_gradient, point,
+    prelude::*, px, size, white,
 };
 use gpui_platform::application;
+use pane::{Doc, MdPane, Mode};
+
+const MAX_PANES: usize = 8;
 
 const SAMPLE: &str = "\
 # markdown-delight
 
 **Rendered natively** — comrak AST → GPUI elements, *no webview*.
 
-- [x] open any `.md` via right-click / double-click
+- [x] tabs · tiling splits · shared live document
 - [x] CRT: scanlines · vignette · tracking · flicker · jiggle · barrel warp
-- [x] master monitor frame + per-screen sub-frames
-- [ ] editor core (G0b) — next
+- [ ] selections · undo · find — next
 
     cargo run -- README.md
 ";
+
+#[derive(Clone, Copy, PartialEq)]
+enum SplitDir {
+    Row,
+    Col,
+}
+
+static SPLIT_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn next_split_id() -> u64 {
+    SPLIT_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The tiling tree: splits divide only the targeted leaf.
+enum Node {
+    Leaf(Entity<MdPane>),
+    Split {
+        id: u64,
+        dir: SplitDir,
+        ratio: f32,
+        a: Box<Node>,
+        b: Box<Node>,
+    },
+}
+
+impl Node {
+    fn leaves<'a>(&'a self, out: &mut Vec<&'a Entity<MdPane>>) {
+        match self {
+            Node::Leaf(e) => out.push(e),
+            Node::Split { a, b, .. } => {
+                a.leaves(out);
+                b.leaves(out);
+            }
+        }
+    }
+
+    fn split_leaf(&mut self, target: EntityId, dir: SplitDir, new: Entity<MdPane>) -> bool {
+        match self {
+            Node::Leaf(e) if e.entity_id() == target => {
+                let old = std::mem::replace(self, Node::Leaf(new.clone()));
+                *self = Node::Split {
+                    id: next_split_id(),
+                    dir,
+                    ratio: 0.5,
+                    a: Box::new(old),
+                    b: Box::new(Node::Leaf(new)),
+                };
+                true
+            }
+            Node::Leaf(_) => false,
+            Node::Split { a, b, .. } => {
+                if a.split_leaf(target, dir, new.clone()) {
+                    true
+                } else {
+                    b.split_leaf(target, dir, new)
+                }
+            }
+        }
+    }
+
+    /// Drop closed leaves; a split with one survivor collapses to it.
+    fn reap(self, cx: &App) -> Option<Node> {
+        match self {
+            Node::Leaf(e) => (!e.read(cx).closed).then_some(Node::Leaf(e)),
+            Node::Split { id, dir, ratio, a, b } => match (a.reap(cx), b.reap(cx)) {
+                (Some(a), Some(b)) => Some(Node::Split {
+                    id,
+                    dir,
+                    ratio,
+                    a: Box::new(a),
+                    b: Box::new(b),
+                }),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+
+    fn dir_of(&self, target: u64) -> Option<SplitDir> {
+        match self {
+            Node::Leaf(_) => None,
+            Node::Split { id, dir, a, b, .. } => {
+                if *id == target {
+                    Some(*dir)
+                } else {
+                    a.dir_of(target).or_else(|| b.dir_of(target))
+                }
+            }
+        }
+    }
+
+    fn set_ratio(&mut self, target: u64, value: f32) -> bool {
+        match self {
+            Node::Leaf(_) => false,
+            Node::Split { id, ratio, a, b, .. } => {
+                if *id == target {
+                    *ratio = value.clamp(0.15, 0.85);
+                    true
+                } else {
+                    a.set_ratio(target, value) || b.set_ratio(target, value)
+                }
+            }
+        }
+    }
+}
+
+struct Tab {
+    root: Node,
+    name: Option<String>,
+}
+
+/// Frame-wide jiggle: the whole device hops ±1px every so often.
+struct FrameJiggle {
+    started: Instant,
+    rng: u64,
+    px: f32,
+    until: f32,
+    next_at: f32,
+}
+
+impl FrameJiggle {
+    fn new() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64)
+            .unwrap_or(3);
+        Self {
+            started: Instant::now(),
+            rng: 0x9E3779B97F4A7C15 ^ seed,
+            px: 0.,
+            until: 0.,
+            next_at: 5.0,
+        }
+    }
+    fn rand(&mut self) -> f32 {
+        self.rng = self
+            .rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((self.rng >> 33) as f32) / (u32::MAX as f32 / 2.0)
+    }
+    fn tick(&mut self) -> bool {
+        let t = self.started.elapsed().as_secs_f32();
+        if self.px != 0. && t >= self.until {
+            self.px = 0.;
+            return true;
+        }
+        if self.px == 0. && t >= self.next_at {
+            self.px = if self.rand() > 1.0 { 1.0 } else { -1.0 };
+            self.until = t + 0.07;
+            self.next_at = t + 7.0 + self.rand() * 5.0;
+            return true;
+        }
+        false
+    }
+}
+
+struct Workspace {
+    doc: Entity<Doc>,
+    tabs: Vec<Tab>,
+    active: usize,
+    focus_handle: gpui::FocusHandle,
+    renaming: Option<(usize, String)>,
+    jiggle: FrameJiggle,
+    last_action: Instant,
+    drag_split: Option<u64>,
+    split_bounds: Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
+    pane_seed: u64,
+}
+
+impl Workspace {
+    fn new(doc: Entity<Doc>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut ws = Self {
+            doc,
+            tabs: vec![],
+            active: 0,
+            focus_handle: cx.focus_handle(),
+            renaming: None,
+            jiggle: FrameJiggle::new(),
+            last_action: Instant::now() - Duration::from_secs(1),
+            drag_split: None,
+            split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            pane_seed: 0xD0C5,
+        };
+        // the opening pane: SOURCE mode — right-click → open → start typing
+        let pane = ws.make_pane(Mode::Source, cx);
+        ws.tabs.push(Tab {
+            root: Node::Leaf(pane),
+            name: None,
+        });
+        ws.focus_active(window, cx);
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(60))
+                    .await;
+                let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                    if ws.jiggle.tick() {
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+        ws
+    }
+
+    fn make_pane(&mut self, mode: Mode, cx: &mut Context<Self>) -> Entity<MdPane> {
+        self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
+        let doc = self.doc.clone();
+        let seed = self.pane_seed;
+        cx.new(|cx| MdPane::new(doc, mode, seed, cx))
+    }
+
+    fn pane_count(&self) -> usize {
+        let mut n = 0;
+        for t in &self.tabs {
+            let mut v = vec![];
+            t.root.leaves(&mut v);
+            n += v.len();
+        }
+        n
+    }
+
+    /// Mouse-down can dispatch more than once per physical click (capture +
+    /// bubble); structural actions debounce to one per 200ms.
+    fn debounced(&mut self) -> bool {
+        if self.last_action.elapsed() < Duration::from_millis(200) {
+            return false;
+        }
+        self.last_action = Instant::now();
+        true
+    }
+
+    fn new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.debounced() {
+            return;
+        }
+        let pane = self.make_pane(Mode::Preview, cx);
+        self.tabs.push(Tab {
+            root: Node::Leaf(pane),
+            name: None,
+        });
+        self.active = self.tabs.len() - 1;
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// Split ONLY the focused pane. The new pane opens in the OPPOSITE mode:
+    /// split a source pane and you get a live preview beside it.
+    fn split(&mut self, dir: SplitDir, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.debounced() {
+            return;
+        }
+        if self.pane_count() >= MAX_PANES {
+            return;
+        }
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let focused = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .or_else(|| leaves.first());
+        let Some(focused) = focused else { return };
+        let target = focused.entity_id();
+        let new_mode = match focused.read(cx).mode {
+            Mode::Source => Mode::Preview,
+            Mode::Preview => Mode::Source,
+        };
+        let new_pane = self.make_pane(new_mode, cx);
+        self.tabs[self.active].root.split_leaf(target, dir, new_pane);
+        cx.notify();
+    }
+
+    fn close_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.debounced() {
+            return;
+        }
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        if let Some(p) = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+        {
+            if self.pane_count() > 1 {
+                p.update(cx, |pane, _| pane.closed = true);
+                cx.notify();
+            }
+        }
+    }
+
+    fn reap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut changed = false;
+        let mut i = 0;
+        while i < self.tabs.len() {
+            let tab = self.tabs.remove(i);
+            match tab.root.reap(cx) {
+                Some(root) => {
+                    self.tabs.insert(
+                        i,
+                        Tab {
+                            root,
+                            name: tab.name,
+                        },
+                    );
+                    i += 1;
+                }
+                None => changed = true,
+            }
+        }
+        if self.tabs.is_empty() {
+            let pane = self.make_pane(Mode::Source, cx);
+            self.tabs.push(Tab {
+                root: Node::Leaf(pane),
+                name: None,
+            });
+            changed = true;
+        }
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len() - 1;
+            changed = true;
+        }
+        if changed {
+            self.focus_active(window, cx);
+        }
+    }
+
+    fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if i < self.tabs.len() {
+            self.active = i;
+            self.focus_active(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active) {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if let Some(p) = leaves.first() {
+                window.focus(&p.focus_handle(cx), cx);
+            }
+        }
+    }
+
+    fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let ks = &ev.keystroke;
+        let m = &ks.modifiers;
+        // the inline rename box owns the keyboard while open
+        if let Some((tab_i, mut buf)) = self.renaming.take() {
+            match ks.key.as_str() {
+                "enter" => {
+                    if let Some(tab) = self.tabs.get_mut(tab_i) {
+                        tab.name = (!buf.trim().is_empty()).then(|| buf.trim().to_string());
+                    }
+                    self.focus_active(window, cx);
+                }
+                "escape" => self.focus_active(window, cx),
+                "backspace" => {
+                    buf.pop();
+                    self.renaming = Some((tab_i, buf));
+                }
+                _ => {
+                    if let Some(ch) = ks.key_char.as_ref() {
+                        if buf.chars().count() < 18 {
+                            buf.push_str(ch);
+                        }
+                    }
+                    self.renaming = Some((tab_i, buf));
+                }
+            }
+            cx.notify();
+            return;
+        }
+        if m.control && m.shift && ks.key.as_str() == "t" {
+            self.new_tab(window, cx);
+            return;
+        }
+        if m.control && !m.alt && !m.shift && ks.key.as_str() == "w" {
+            self.close_focused(window, cx);
+            return;
+        }
+        if m.control && !m.alt && self.tabs.len() > 1 {
+            match ks.key.as_str() {
+                "pageup" => {
+                    let n = self.tabs.len();
+                    self.activate_tab((self.active + n - 1) % n, window, cx);
+                    return;
+                }
+                "pagedown" => {
+                    let n = self.tabs.len();
+                    self.activate_tab((self.active + 1) % n, window, cx);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if m.control && m.alt {
+            match ks.key.as_str() {
+                "r" => self.split(SplitDir::Row, window, cx),
+                "d" => self.split(SplitDir::Col, window, cx),
+                _ => {}
+            }
+            return;
+        }
+        if m.alt && !m.control {
+            let Some(tab) = self.tabs.get(self.active) else {
+                return;
+            };
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            if leaves.len() > 1 {
+                let dir: i32 = match ks.key.as_str() {
+                    "left" | "up" => -1,
+                    "right" | "down" => 1,
+                    _ => return,
+                };
+                let cur = leaves
+                    .iter()
+                    .position(|p| p.focus_handle(cx).is_focused(window))
+                    .unwrap_or(0) as i32;
+                let next = (cur + dir).rem_euclid(leaves.len() as i32) as usize;
+                window.focus(&leaves[next].focus_handle(cx), cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if ev.pressed_button == Some(MouseButton::Left) {
+            if let Some(split_id) = self.drag_split {
+                let bounds = self.split_bounds.lock().unwrap().get(&split_id).copied();
+                if let (Some(b), Some(tab)) = (bounds, self.tabs.get_mut(self.active)) {
+                    let rx = ((f32::from(ev.position.x) - f32::from(b.origin.x))
+                        / f32::from(b.size.width).max(1.))
+                    .clamp(0., 1.);
+                    let ry = ((f32::from(ev.position.y) - f32::from(b.origin.y))
+                        / f32::from(b.size.height).max(1.))
+                    .clamp(0., 1.);
+                    let dir = tab.root.dir_of(split_id);
+                    let ratio = match dir {
+                        Some(SplitDir::Row) => rx,
+                        Some(SplitDir::Col) => ry,
+                        None => return,
+                    };
+                    tab.root.set_ratio(split_id, ratio);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn on_mouse_up(&mut self, _ev: &MouseUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if self.drag_split.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn bezel_btn(th: &theme::Theme, label: &str, active: bool) -> gpui::Div {
+        let b = div()
+            .px_2()
+            .py_0p5()
+            .rounded_sm()
+            .border_1()
+            .text_size(px(10.5))
+            .cursor_pointer();
+        if active {
+            b.bg(th.frame_border.alpha(0.35))
+                .border_color(th.frame_border)
+                .text_color(white())
+                .child(label.to_string())
+        } else {
+            b.bg(linear_gradient(
+                135.,
+                linear_color_stop(brighten(th.frame_bg, 1.7), 0.),
+                linear_color_stop(darken(th.frame_bg, 0.7), 1.),
+            ))
+            .border_color(th.frame_border.alpha(0.4))
+            .text_color(th.frame_text)
+            .child(label.to_string())
+        }
+    }
+}
 
 fn darken(mut c: Hsla, f: f32) -> Hsla {
     c.l *= f;
@@ -49,296 +541,198 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
-#[derive(PartialEq, Clone, Copy)]
-enum Mode {
-    Preview,
-    Source,
-}
-
-struct MdView {
-    focus_handle: FocusHandle,
-    path_label: SharedString,
-    path: Option<PathBuf>,
-    blocks: Vec<render::Block>,
-    editor: editor::Editor,
-    mode: Mode,
-    fx: crt::Fx,
-}
-
-impl MdView {
-    fn new(path_label: String, path: Option<PathBuf>, text: String, cx: &mut Context<Self>) -> Self {
-        // fx clock: cheap idle poll; only notifies when something visibly moved
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(33))
-                    .await;
-                let _ = this.update(cx, |view: &mut MdView, cx| {
-                    let th = theme::theme(cx);
-                    if view.fx.tick(&th) {
-                        cx.notify();
-                    }
-                });
-            }
-        })
-        .detach();
-        Self {
-            focus_handle: cx.focus_handle(),
-            path_label: path_label.into(),
-            path,
-            blocks: render::parse(&text),
-            editor: editor::Editor::new(&text),
-            mode: Mode::Preview,
-            fx: crt::Fx::new(0xD0C5),
-        }
-    }
-
-    fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        let ks = &ev.keystroke;
-        // global chords
-        if ks.modifiers.control {
-            match ks.key.as_str() {
-                "e" => {
-                    self.mode = match self.mode {
-                        Mode::Preview => Mode::Source,
-                        Mode::Source => {
-                            // re-render the document from the edited buffer
-                            self.blocks = render::parse(&self.editor.text());
-                            Mode::Preview
-                        }
-                    };
-                    cx.notify();
-                }
-                "s" => {
-                    if let Some(path) = &self.path {
-                        if let Err(e) = self.editor.save(path) {
-                            eprintln!("save failed: {e}");
-                        }
-                        self.blocks = render::parse(&self.editor.text());
-                        cx.notify();
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-        if self.mode != Mode::Source {
-            return;
-        }
-        match ks.key.as_str() {
-            "enter" => self.editor.insert("\n"),
-            "backspace" => self.editor.backspace(),
-            "delete" => self.editor.delete(),
-            "left" => self.editor.left(),
-            "right" => self.editor.right(),
-            "up" => self.editor.up(),
-            "down" => self.editor.down(),
-            "home" => self.editor.home(),
-            "end" => self.editor.end(),
-            "tab" => self.editor.insert("  "),
-            "space" => self.editor.insert(" "),
-            _ => {
-                if let Some(ch) = ks.key_char.as_ref() {
-                    self.editor.insert(ch);
+fn render_node(
+    node: &Node,
+    th: &theme::Theme,
+    focused: Option<EntityId>,
+    dragging: Option<u64>,
+    registry: &Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
+    cx: &mut Context<Workspace>,
+) -> gpui::Div {
+    match node {
+        Node::Leaf(e) => {
+            let is_focused = focused == Some(e.entity_id());
+            div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .overflow_hidden()
+                .rounded_md()
+                .border_1()
+                .border_color(if is_focused {
+                    th.frame_border.alpha(0.7)
                 } else {
-                    return;
-                }
-            }
+                    th.frame_border.alpha(0.25)
+                })
+                .child(e.clone())
         }
-        cx.notify();
-    }
-
-    /// The source tube: every buffer line, block cursor on the active one.
-    fn source_lines(&self, th: &theme::Theme) -> Vec<gpui::AnyElement> {
-        let (cur_line, cur_col) = self.editor.line_col();
-        (0..self.editor.line_count())
-            .map(|i| {
-                let mut text = self.editor.line(i);
-                let line = div().h(px(21.)).whitespace_nowrap();
-                if i != cur_line {
-                    return if text.is_empty() {
-                        line.into_any_element()
-                    } else {
-                        line.child(SharedString::from(text)).into_any_element()
-                    };
-                }
-                // cursor line: highlight the char under a block cursor
-                let (start, end) = match text.char_indices().nth(cur_col) {
-                    Some((b, c)) => (b, b + c.len_utf8()),
-                    None => {
-                        text.push(' '); // cursor sits past EOL
-                        (text.len() - 1, text.len())
-                    }
-                };
-                line.child(
-                    StyledText::new(SharedString::from(text)).with_highlights([(
-                        start..end,
-                        HighlightStyle {
-                            color: Some(th.bg),
-                            background_color: Some(th.accent),
-                            ..Default::default()
-                        },
-                    )]),
+        Node::Split {
+            id,
+            dir,
+            ratio,
+            a,
+            b,
+        } => {
+            let id = *id;
+            let dir = *dir;
+            let is_dragging = dragging == Some(id);
+            let store = registry.clone();
+            let measure = div().absolute().inset_0().child(
+                canvas(
+                    move |bounds, _, _| {
+                        store.lock().unwrap().insert(id, bounds);
+                    },
+                    |_, _, _, _| {},
                 )
-                .into_any_element()
-            })
-            .collect()
+                .size_full(),
+            );
+            let mut handle = div().flex_none().bg(if is_dragging {
+                th.frame_border.alpha(0.8)
+            } else {
+                th.frame_border.alpha(0.25)
+            });
+            handle = match dir {
+                SplitDir::Row => handle.w(px(7.)).h_full().cursor_col_resize(),
+                SplitDir::Col => handle.h(px(7.)).w_full().cursor_row_resize(),
+            };
+
+            let first = div()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .child(render_node(a, th, focused, dragging, registry, cx));
+            let first = match dir {
+                SplitDir::Row => first.h_full().w(gpui::relative(*ratio)),
+                SplitDir::Col => first.w_full().h(gpui::relative(*ratio)),
+            };
+            let second = div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .child(render_node(b, th, focused, dragging, registry, cx));
+
+            let ratio_now = *ratio;
+            let store2 = registry.clone();
+            let base = div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .relative()
+                .flex()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                        if ws.drag_split.is_some() {
+                            return;
+                        }
+                        let Some(b) = store2.lock().unwrap().get(&id).copied() else {
+                            return;
+                        };
+                        let (along, extent) = match dir {
+                            SplitDir::Row => (
+                                f32::from(ev.position.x) - f32::from(b.origin.x),
+                                f32::from(b.size.width),
+                            ),
+                            SplitDir::Col => (
+                                f32::from(ev.position.y) - f32::from(b.origin.y),
+                                f32::from(b.size.height),
+                            ),
+                        };
+                        let strip = ratio_now * extent;
+                        if along >= strip - 6. && along <= strip + 13. {
+                            ws.drag_split = Some(id);
+                            cx.notify();
+                        }
+                    }),
+                );
+            let base = match dir {
+                SplitDir::Row => base.flex_row(),
+                SplitDir::Col => base.flex_col(),
+            };
+            base.child(measure).child(first).child(handle).child(second)
+        }
     }
 }
 
-impl Focusable for MdView {
-    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Render for MdView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        warp::begin_frame(); // the tube re-registers its rect below
+impl Render for Workspace {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.reap(window, cx);
+        warp::begin_frame(); // visible panes re-register their tube rects below
         let th = theme::theme(cx);
         let bezel = darken(th.frame_bg, 0.85);
-        let jiggle = self.fx.jiggle_px;
-        let block_count = self.blocks.len();
-        let editing = self.mode == Mode::Source;
-        let dirty = self.editor.dirty;
-        let status = match (editing, dirty) {
-            (true, true) => "editing · ● modified",
-            (true, false) => "editing",
-            (false, true) => "● modified",
-            (false, false) => "live",
-        };
-        let rail_count = if editing { self.editor.line_count() } else { 99 };
+        let tab = &self.tabs[self.active];
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let focused_id = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .map(|p| p.entity_id());
+        let focused_title = leaves
+            .iter()
+            .find(|p| Some(p.entity_id()) == focused_id)
+            .or(leaves.first())
+            .map(|p| p.read(cx).title(cx))
+            .unwrap_or_default();
+        let dirty = self.doc.read(cx).editor.dirty;
+        let pane_count = self.pane_count();
+        let tab_count = self.tabs.len();
+        let jiggle = self.jiggle.px;
 
-        // ---- the sub-monitor: the document tube in its own little frame ----
-        let pane_header = div()
-            .h(px(26.))
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .px_3()
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(brighten(th.frame_bg, 1.9), 0.),
-                linear_color_stop(th.frame_bg, 1.),
-            ))
-            .border_b_1()
-            .border_color(th.frame_border.alpha(0.5))
-            .text_size(px(11.5))
-            .text_color(th.frame_text)
-            .shadow(
-                vec![BoxShadow {
-                    color: white().alpha(0.16),
-                    offset: point(px(1.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                }]
-                .into(),
-            )
-            .child(SharedString::from(format!("▸ {}", self.path_label)))
-            .child(SharedString::from(format!(
-                "{} blocks · {} · {}",
-                block_count, th.name, status
-            )));
-
-        let rail = div()
-            .flex_none()
-            .w(px(40.))
-            .h_full()
-            .overflow_hidden()
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(th.frame_bg, 0.),
-                linear_color_stop(darken(th.frame_bg, 0.7), 1.),
-            ))
-            .border_r_1()
-            .border_color(th.frame_border.alpha(0.3))
-            .flex()
-            .flex_col()
-            .pt_2()
-            .children((1..=rail_count.max(1)).map(|i| {
-                div()
-                    .h(px(21.))
-                    .pr_2()
-                    .text_size(px(11.))
-                    .text_color(th.frame_faint.alpha(0.45))
-                    .flex()
-                    .justify_end()
-                    .child(SharedString::from(format!("{i}")))
-            }));
-
-        let tube = div()
-            .flex_1()
-            .min_w_0()
-            .relative()
-            .overflow_hidden()
-            .bg(th.bg)
-            .child(
-                // register this rect for the renderer's barrel-warp pass
-                div().absolute().inset_0().child(
-                    canvas(
-                        move |bounds, window, _| {
-                            let sf = window.scale_factor();
-                            warp::register([
-                                f32::from(bounds.origin.x) * sf,
-                                f32::from(bounds.origin.y) * sf,
-                                f32::from(bounds.size.width) * sf,
-                                f32::from(bounds.size.height) * sf,
-                            ]);
-                        },
-                        |_, _, _, _| {},
+        // ---- tabs (right-click renames) ----
+        let renaming = self.renaming.clone();
+        let mut tab_strip = div().flex().flex_row().gap_1().items_center();
+        for i in 0..tab_count {
+            let is_active = i == self.active;
+            if let Some((_, buf)) = renaming.as_ref().filter(|(ri, _)| *ri == i) {
+                tab_strip = tab_strip.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(th.accent)
+                        .bg(darken(th.bg, 0.8))
+                        .text_size(px(11.))
+                        .text_color(th.text)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(buf.clone())
+                        .child(div().w(px(6.)).h(px(13.)).bg(th.accent)),
+                );
+                continue;
+            }
+            let label = self.tabs[i]
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}", i + 1));
+            tab_strip = tab_strip.child(
+                Self::bezel_btn(&th, &label, is_active)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            ws.activate_tab(i, window, cx)
+                        }),
                     )
-                    .size_full(),
-                ),
-            )
-            .child(if editing {
-                div()
-                    .id("src")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .overflow_x_hidden()
-                    .px_4()
-                    .py_4()
-                    .text_size(px(13.))
-                    .flex()
-                    .flex_col()
-                    .children(self.source_lines(&th))
-                    .into_any_element()
-            } else {
-                div()
-                    .id("doc")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .overflow_x_hidden()
-                    .px_6()
-                    .py_4()
-                    .child(render::document(&self.blocks))
-                    .into_any_element()
-            })
-            .child(crt::glass(&th, &self.fx));
-
-        let sub_monitor = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .rounded_md()
-            .overflow_hidden()
-            .border_1()
-            .border_color(th.frame_border.alpha(0.45))
-            .child(pane_header)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_row()
-                    .child(rail)
-                    .child(tube),
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                            ws.renaming = Some((i, seed));
+                            window.focus(&ws.focus_handle, cx);
+                            cx.notify();
+                        }),
+                    ),
             );
+        }
+        tab_strip = tab_strip.child(
+            Self::bezel_btn(&th, "+", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
+            ),
+        );
 
-        // ---- master monitor: bezel top strip, screen well, footer ----
         let bezel_top = div()
             .h(px(30.))
             .flex_none()
@@ -353,11 +747,31 @@ impl Render for MdView {
                 div()
                     .flex()
                     .flex_row()
+                    .items_center()
                     .gap_2()
                     .child(div().text_color(th.accent).child("▸ MARKDOWN-DELIGHT"))
-                    .child(div().text_color(th.frame_faint.alpha(0.6)).child("// VIEWER")),
+                    .child(div().text_color(th.frame_faint.alpha(0.6)).child("// EDITOR"))
+                    .child(tab_strip),
             )
-            .child(SharedString::from(format!("{} · live", th.name)));
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(Self::bezel_btn(&th, "▥ split", false).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            ws.split(SplitDir::Row, window, cx)
+                        }),
+                    ))
+                    .child(Self::bezel_btn(&th, "▤ split", false).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            ws.split(SplitDir::Col, window, cx)
+                        }),
+                    )),
+            );
 
         let bezel_bottom = div()
             .h(px(24.))
@@ -369,23 +783,36 @@ impl Render for MdView {
             .px_3()
             .text_size(px(10.5))
             .text_color(th.frame_faint.alpha(0.7))
-            .child(SharedString::from(format!("{} · {}", th.name, self.path_label)))
+            .child(SharedString::from(format!("{} · {}", th.name, focused_title)))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .gap_3()
-                    .child(SharedString::from(if editing {
-                        "ctrl+e preview · ctrl+s save".to_string()
-                    } else {
-                        "ctrl+e edit".to_string()
-                    }))
+                    .child(SharedString::from(format!(
+                        "{tab_count} tab{} · {pane_count} pane{}",
+                        if tab_count == 1 { "" } else { "s" },
+                        if pane_count == 1 { "" } else { "s" }
+                    )))
                     .child(div().text_color(th.accent).child(if dirty {
                         "● MODIFIED"
                     } else {
                         "● READY"
                     })),
             );
+
+        let pane_area = div()
+            .size_full()
+            .flex()
+            .p(px(3.))
+            .child(render_node(
+                &tab.root,
+                &th,
+                focused_id,
+                self.drag_split,
+                &self.split_bounds,
+                cx,
+            ));
 
         let screen_well = div()
             .flex_1()
@@ -397,11 +824,13 @@ impl Render for MdView {
             .border_1()
             .border_color(darken(th.frame_bg, 0.5))
             .mx_2()
-            .child(div().size_full().flex().p(px(4.)).child(sub_monitor));
+            .child(pane_area);
 
         div()
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .size_full()
             .bg(darken(bezel, 0.5))
             .px(px(5.))
@@ -425,7 +854,6 @@ impl Render for MdView {
                     .border_color(th.frame_border.alpha(0.45))
                     .shadow(
                         vec![
-                            // upper-left light source: glint biased to (1,1)
                             BoxShadow {
                                 color: white().alpha(0.14),
                                 offset: point(px(1.), px(1.)),
@@ -473,10 +901,11 @@ fn load() -> (String, Option<PathBuf>, String) {
 
 fn main() {
     let (label, path, text) = load();
-    application().run(move |cx: &mut gpui::App| {
+    application().run(move |cx: &mut App| {
         theme::init(cx);
-        let bounds = gpui::Bounds::centered(None, size(px(1100.), px(760.)), cx);
+        let bounds = gpui::Bounds::centered(None, size(px(1180.), px(800.)), cx);
         let title: SharedString = format!("{label} — markdown-delight").into();
+        let doc = cx.new(|_| Doc::new(label.clone(), path.clone(), text.clone()));
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -486,14 +915,10 @@ fn main() {
                 }),
                 ..Default::default()
             },
-            |window, cx| {
-                // match the .desktop StartupWMClass so the dock shows OUR
-                // CRT icon instead of the generic gear
+            move |window, cx| {
+                // match the .desktop StartupWMClass so the dock shows OUR icon
                 window.set_app_id("markdown-delight");
-                let view =
-                    cx.new(|cx| MdView::new(label.clone(), path.clone(), text.clone(), cx));
-                window.focus(&view.focus_handle(cx), cx);
-                view
+                cx.new(|cx| Workspace::new(doc.clone(), window, cx))
             },
         )
         .expect("open window");

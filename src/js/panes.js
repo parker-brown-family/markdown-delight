@@ -67,13 +67,40 @@ const doc = { text: SAMPLE };
 const previews = new Set();
 const notify = () => previews.forEach((fn) => fn());
 
+/* ---------------- shared line-counter rail ----------------
+   Every screen wears one, fused to the pane's top bar (the L-shaped shell).
+   The editor numbers real source lines; other panes carry a ruler that
+   covers their scroll height, scroll-synced like the editor's. */
+function makeGutter() {
+  const g = document.createElement('div');
+  g.className = 'gutter';
+  return g;
+}
+function fillRuler(gutter, el) {
+  const lh = parseFloat(getComputedStyle(el).lineHeight) || 24;
+  const n = Math.max(1, Math.ceil(el.scrollHeight / lh));
+  let s = '';
+  for (let i = 1; i <= n; i++) s += i + '\n';
+  gutter.textContent = s;
+}
+function withRail(contentEl, focus, title) {
+  const wrap = document.createElement('div');
+  wrap.className = 'screen';
+  const gutter = makeGutter();
+  wrap.append(gutter, contentEl);
+  contentEl.addEventListener('scroll', () => { gutter.scrollTop = contentEl.scrollTop; });
+  const sync = () => fillRuler(gutter, contentEl);
+  // measure once attached (scrollHeight is 0 while detached)
+  requestAnimationFrame(sync);
+  return { el: wrap, title, focus: focus || (() => {}), sync };
+}
+
 /* ---------------- editor (source surface) ---------------- */
 function createEditor(label) {
   const el = document.createElement('div');
   el.className = 'editor';
 
-  const gutter = document.createElement('div');
-  gutter.className = 'gutter';
+  const gutter = makeGutter();
 
   const ta = document.createElement('textarea');
   ta.className = 'src';
@@ -111,10 +138,11 @@ function createEditor(label) {
 function createPreview(label) {
   const el = document.createElement('div');
   el.className = 'preview';
-  const render = () => { el.innerHTML = renderMarkdown(doc.text); };
+  const railed = withRail(el, null, label || 'preview');
+  const render = () => { el.innerHTML = renderMarkdown(doc.text); railed.sync(); };
   previews.add(render);
   render();
-  return { el, title: label || 'preview', focus: () => {} };
+  return railed;
 }
 
 /* ---------------- file-tree (mock workspace) ---------------- */
@@ -137,7 +165,7 @@ function createFiletree(label) {
     row.innerHTML = `<span class="ft-ico">${kind === 'dir' ? ico : '▪'}</span><span>${name}</span>`;
     el.appendChild(row);
   });
-  return { el, title: label || 'files', focus: () => {} };
+  return withRail(el, null, label || 'files');
 }
 
 const FACTORIES = { editor: createEditor, preview: createPreview, filetree: createFiletree };

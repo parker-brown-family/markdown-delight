@@ -13,16 +13,17 @@
 //!   cargo run -- README.md    # renders that file
 
 mod crt;
+mod editor;
 mod render;
 mod theme;
 mod warp;
 
-use std::{env, fs, time::Duration};
+use std::{env, fs, path::PathBuf, time::Duration};
 
 use gpui::{
-    BoxShadow, Context, FocusHandle, Focusable, Hsla, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, canvas, div, hsla, linear_color_stop, linear_gradient, point,
-    prelude::*, px, rgb, size, white,
+    BoxShadow, Context, FocusHandle, Focusable, HighlightStyle, Hsla, KeyDownEvent, SharedString,
+    StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla,
+    linear_color_stop, linear_gradient, point, prelude::*, px, size, white,
 };
 use gpui_platform::application;
 
@@ -48,15 +49,24 @@ fn brighten(mut c: Hsla, f: f32) -> Hsla {
     c
 }
 
+#[derive(PartialEq, Clone, Copy)]
+enum Mode {
+    Preview,
+    Source,
+}
+
 struct MdView {
     focus_handle: FocusHandle,
     path_label: SharedString,
+    path: Option<PathBuf>,
     blocks: Vec<render::Block>,
+    editor: editor::Editor,
+    mode: Mode,
     fx: crt::Fx,
 }
 
 impl MdView {
-    fn new(path_label: String, text: String, cx: &mut Context<Self>) -> Self {
+    fn new(path_label: String, path: Option<PathBuf>, text: String, cx: &mut Context<Self>) -> Self {
         // fx clock: cheap idle poll; only notifies when something visibly moved
         cx.spawn(async move |this, cx| {
             loop {
@@ -75,9 +85,104 @@ impl MdView {
         Self {
             focus_handle: cx.focus_handle(),
             path_label: path_label.into(),
+            path,
             blocks: render::parse(&text),
+            editor: editor::Editor::new(&text),
+            mode: Mode::Preview,
             fx: crt::Fx::new(0xD0C5),
         }
+    }
+
+    fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let ks = &ev.keystroke;
+        // global chords
+        if ks.modifiers.control {
+            match ks.key.as_str() {
+                "e" => {
+                    self.mode = match self.mode {
+                        Mode::Preview => Mode::Source,
+                        Mode::Source => {
+                            // re-render the document from the edited buffer
+                            self.blocks = render::parse(&self.editor.text());
+                            Mode::Preview
+                        }
+                    };
+                    cx.notify();
+                }
+                "s" => {
+                    if let Some(path) = &self.path {
+                        if let Err(e) = self.editor.save(path) {
+                            eprintln!("save failed: {e}");
+                        }
+                        self.blocks = render::parse(&self.editor.text());
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        if self.mode != Mode::Source {
+            return;
+        }
+        match ks.key.as_str() {
+            "enter" => self.editor.insert("\n"),
+            "backspace" => self.editor.backspace(),
+            "delete" => self.editor.delete(),
+            "left" => self.editor.left(),
+            "right" => self.editor.right(),
+            "up" => self.editor.up(),
+            "down" => self.editor.down(),
+            "home" => self.editor.home(),
+            "end" => self.editor.end(),
+            "tab" => self.editor.insert("  "),
+            "space" => self.editor.insert(" "),
+            _ => {
+                if let Some(ch) = ks.key_char.as_ref() {
+                    self.editor.insert(ch);
+                } else {
+                    return;
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The source tube: every buffer line, block cursor on the active one.
+    fn source_lines(&self, th: &theme::Theme) -> Vec<gpui::AnyElement> {
+        let (cur_line, cur_col) = self.editor.line_col();
+        (0..self.editor.line_count())
+            .map(|i| {
+                let mut text = self.editor.line(i);
+                let line = div().h(px(21.)).whitespace_nowrap();
+                if i != cur_line {
+                    return if text.is_empty() {
+                        line.into_any_element()
+                    } else {
+                        line.child(SharedString::from(text)).into_any_element()
+                    };
+                }
+                // cursor line: highlight the char under a block cursor
+                let (start, end) = match text.char_indices().nth(cur_col) {
+                    Some((b, c)) => (b, b + c.len_utf8()),
+                    None => {
+                        text.push(' '); // cursor sits past EOL
+                        (text.len() - 1, text.len())
+                    }
+                };
+                line.child(
+                    StyledText::new(SharedString::from(text)).with_highlights([(
+                        start..end,
+                        HighlightStyle {
+                            color: Some(th.bg),
+                            background_color: Some(th.accent),
+                            ..Default::default()
+                        },
+                    )]),
+                )
+                .into_any_element()
+            })
+            .collect()
     }
 }
 
@@ -94,6 +199,15 @@ impl Render for MdView {
         let bezel = darken(th.frame_bg, 0.85);
         let jiggle = self.fx.jiggle_px;
         let block_count = self.blocks.len();
+        let editing = self.mode == Mode::Source;
+        let dirty = self.editor.dirty;
+        let status = match (editing, dirty) {
+            (true, true) => "editing · ● modified",
+            (true, false) => "editing",
+            (false, true) => "● modified",
+            (false, false) => "live",
+        };
+        let rail_count = if editing { self.editor.line_count() } else { 99 };
 
         // ---- the sub-monitor: the document tube in its own little frame ----
         let pane_header = div()
@@ -125,8 +239,8 @@ impl Render for MdView {
             )
             .child(SharedString::from(format!("▸ {}", self.path_label)))
             .child(SharedString::from(format!(
-                "{} blocks · {} · live",
-                block_count, th.name
+                "{} blocks · {} · {}",
+                block_count, th.name, status
             )));
 
         let rail = div()
@@ -144,7 +258,7 @@ impl Render for MdView {
             .flex()
             .flex_col()
             .pt_2()
-            .children((1..=99).map(|i| {
+            .children((1..=rail_count.max(1)).map(|i| {
                 div()
                     .h(px(21.))
                     .pr_2()
@@ -179,7 +293,20 @@ impl Render for MdView {
                     .size_full(),
                 ),
             )
-            .child(
+            .child(if editing {
+                div()
+                    .id("src")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .overflow_x_hidden()
+                    .px_4()
+                    .py_4()
+                    .text_size(px(13.))
+                    .flex()
+                    .flex_col()
+                    .children(self.source_lines(&th))
+                    .into_any_element()
+            } else {
                 div()
                     .id("doc")
                     .size_full()
@@ -187,8 +314,9 @@ impl Render for MdView {
                     .overflow_x_hidden()
                     .px_6()
                     .py_4()
-                    .child(render::document(&self.blocks)),
-            )
+                    .child(render::document(&self.blocks))
+                    .into_any_element()
+            })
             .child(crt::glass(&th, &self.fx));
 
         let sub_monitor = div()
@@ -247,8 +375,16 @@ impl Render for MdView {
                     .flex()
                     .flex_row()
                     .gap_3()
-                    .child(SharedString::from(format!("{block_count} blocks")))
-                    .child(div().text_color(th.accent).child("● READY")),
+                    .child(SharedString::from(if editing {
+                        "ctrl+e preview · ctrl+s save".to_string()
+                    } else {
+                        "ctrl+e edit".to_string()
+                    }))
+                    .child(div().text_color(th.accent).child(if dirty {
+                        "● MODIFIED"
+                    } else {
+                        "● READY"
+                    })),
             );
 
         let screen_well = div()
@@ -265,6 +401,7 @@ impl Render for MdView {
 
         div()
             .track_focus(&self.focus_handle(cx))
+            .on_key_down(cx.listener(Self::on_key))
             .size_full()
             .bg(darken(bezel, 0.5))
             .px(px(5.))
@@ -320,18 +457,22 @@ impl Render for MdView {
     }
 }
 
-fn load() -> (String, String) {
+fn load() -> (String, Option<PathBuf>, String) {
     match env::args().nth(1) {
         Some(path) => match fs::read_to_string(&path) {
-            Ok(text) => (path, text),
-            Err(e) => (format!("{path} (error)"), format!("could not read {path}:\n{e}")),
+            Ok(text) => (path.clone(), Some(PathBuf::from(path)), text),
+            Err(e) => (
+                format!("{path} (error)"),
+                None,
+                format!("could not read {path}:\n{e}"),
+            ),
         },
-        None => ("sample.md".to_string(), SAMPLE.to_string()),
+        None => ("sample.md".to_string(), None, SAMPLE.to_string()),
     }
 }
 
 fn main() {
-    let (label, text) = load();
+    let (label, path, text) = load();
     application().run(move |cx: &mut gpui::App| {
         theme::init(cx);
         let bounds = gpui::Bounds::centered(None, size(px(1100.), px(760.)), cx);
@@ -346,7 +487,11 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                let view = cx.new(|cx| MdView::new(label.clone(), text.clone(), cx));
+                // match the .desktop StartupWMClass so the dock shows OUR
+                // CRT icon instead of the generic gear
+                window.set_app_id("markdown-delight");
+                let view =
+                    cx.new(|cx| MdView::new(label.clone(), path.clone(), text.clone(), cx));
                 window.focus(&view.focus_handle(cx), cx);
                 view
             },

@@ -78,6 +78,28 @@ const at = (base, dh, s, l) => toHex(hslToRgb({ h: base.h + dh, s: Math.max(18, 
 function derivePalette(hex) {
   const rgb = hexToRgb(hex), hsl = rgbToHsl(rgb);
   const lum = (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+
+  /* Monochrome phosphor: a near-grey seed (channel spread ≤ 5, e.g. 135 135 135)
+     means the operator wants a white/grey/black tube — NOT a hue invented by the
+     min-saturation clamp below. Derive a pure greyscale ladder from its lightness. */
+  const spread = Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b);
+  if (spread <= 5) {
+    const l = Math.max(30, Math.min(80, hsl.l));
+    const grey = (lt) => toHex(hslToRgb({ h: 0, s: 0, l: Math.max(4, Math.min(96, lt)) }));
+    const g = (lt) => { const h = grey(lt); return { hex: h, rgb: hexToRgb(h) }; };
+    const accent = g(l), strong = g(l + 22), complement = g(l + 14), field = g(l - 4), warm = g(l + 8);
+    return {
+      accent: accent.hex, accentRgb: accent.rgb,
+      strong: strong.hex,
+      muted: grey(Math.max(36, l - 10)),
+      dark: grey(Math.max(10, l - 44)),
+      complement: complement.hex, complementRgb: complement.rgb,
+      field: field.hex, fieldRgb: field.rgb,
+      warm: warm.hex, warmRgb: warm.rgb,
+      ink: lum > 0.58 ? '#0a0a0a' : '#f2f2f2',
+    };
+  }
+
   const sat = Math.max(18, hsl.s), light = Math.max(34, Math.min(72, hsl.l));
   const accent = normalizeHex(hex);
   const complement = at(hsl, 180, Math.max(42, sat - 8), Math.min(72, light + 4));

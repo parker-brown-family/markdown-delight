@@ -115,20 +115,41 @@ body {
 
 /* ---- top bar: brand + tabs + theme menu ---- */
 /* ============================================================
-   THE SHELL SURFACE — one moulded object, one light.
-   Every housing piece (topbar, pane bars, line-counter rails, splitters)
-   shares a SINGLE viewport-fixed specular field over the same flat base,
-   so adjacent pieces join seamlessly: the gloss is sampled from the same
-   screen coordinates no matter which element paints it.
+   THE SHELL SURFACE — light catches the TOP of each frame piece and
+   falls off downward (top ~10% of the assembly is lit).
+   One master falloff curve: full gloss at the top of the bar → zero by
+   120px down. The bar (28px tall) renders the 0–28px stretch of that
+   curve; the rail below renders 28–120px — the alphas meet at exactly
+   gloss×.77 on both sides of the joint, so the L-piece is continuous
+   through the corner BY CONSTRUCTION. No fixed attachment, no filters.
    ============================================================ */
-.topbar, .pane-head, .gutter, .splitter {
+.pane-head {
   background:
-    linear-gradient(118deg,
-      rgb(255 255 255 / var(--frame-gloss)) 0%,
-      rgb(255 255 255 / calc(var(--frame-gloss) * .35)) 34%,
-      rgb(255 255 255 / 0) 60%),
+    linear-gradient(180deg,
+      rgb(255 255 255 / var(--frame-gloss)) 0,
+      rgb(255 255 255 / calc(var(--frame-gloss) * .77)) 100%),
     var(--frame-bg);
-  background-attachment: fixed, scroll;
+}
+.gutter {
+  background:
+    linear-gradient(180deg,
+      rgb(255 255 255 / calc(var(--frame-gloss) * .77)) 0,
+      rgb(255 255 255 / 0) 92px),
+    var(--frame-bg);
+}
+.topbar {
+  background:
+    linear-gradient(180deg,
+      rgb(255 255 255 / var(--frame-gloss)) 0,
+      rgb(255 255 255 / calc(var(--frame-gloss) * .66)) 100%),
+    var(--frame-bg);
+}
+.splitter {
+  background:
+    linear-gradient(180deg,
+      rgb(255 255 255 / var(--frame-gloss)) 0,
+      rgb(255 255 255 / 0) 120px),
+    var(--frame-bg);
 }
 
 .topbar {

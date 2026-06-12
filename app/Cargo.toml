@@ -13,6 +13,7 @@ description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app p
 comrak = "0.52.0"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
+ropey = "1.6.1"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 

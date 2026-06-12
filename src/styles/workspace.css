@@ -33,15 +33,23 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 5;
+  /* light source: upper-left at ~35%. The vignette pivots toward the light
+     (bottom-right corner falls off darkest) and the bloom is an elongated
+     diagonal smear — two offset ellipses, not a centered circle — with a
+     small white glass glint riding its upper-left shoulder. */
   background:
-    radial-gradient(ellipse at center,
-      transparent 24%,
-      rgb(0 0 0 / var(--crt-mid)) 63%,
+    radial-gradient(ellipse at 38% 32%,
+      transparent 22%,
+      rgb(0 0 0 / var(--crt-mid)) 60%,
       rgb(0 0 0 / var(--crt-corner)) 100%),
-    radial-gradient(circle at 50% 42%,
+    radial-gradient(ellipse 72% 50% at 35% 30%,
       rgb(var(--phosphor-rgb) / var(--crt-bloom)) 0,
-      rgb(var(--phosphor-rgb) / calc(var(--crt-bloom) * .39)) 22%,
-      transparent 58%),
+      rgb(var(--phosphor-rgb) / calc(var(--crt-bloom) * .39)) 26%,
+      transparent 60%),
+    radial-gradient(ellipse 30% 16% at 24% 16%,
+      rgb(255 255 255 / calc(var(--crt-bloom) * .30)) 0,
+      rgb(255 255 255 / calc(var(--crt-bloom) * .10)) 45%,
+      transparent 72%),
     repeating-linear-gradient(to bottom,
       rgb(0 0 0 / var(--crt-scan-dark)) 0,
       rgb(0 0 0 / var(--crt-scan-dark)) 1px,
@@ -112,11 +120,11 @@ body {
   display: flex; align-items: center; gap: 10px;
   height: 40px; padding: 0 10px;
   background:
-    linear-gradient(180deg,
+    linear-gradient(118deg,
       rgb(255 255 255 / var(--frame-gloss)) 0%,
-      rgb(255 255 255 / calc(var(--frame-gloss) * .3)) 42%,
-      rgb(255 255 255 / 0) 64%),
-    linear-gradient(180deg, var(--frame-bg), var(--frame-bg-deep));
+      rgb(255 255 255 / calc(var(--frame-gloss) * .3)) 38%,
+      rgb(255 255 255 / 0) 62%),
+    linear-gradient(118deg, var(--frame-bg), var(--frame-bg-deep));
   border-bottom: 1px solid var(--frame-border);
   box-shadow: inset 0 -12px 22px -12px rgb(var(--phosphor-rgb) / calc(var(--frame-underglow) * .7));
   color: var(--frame-text);
@@ -204,11 +212,11 @@ body {
   height: 28px; padding: 0 6px 0 10px; flex: 0 0 auto;
   /* glossy shell strip with the tube's underglow rising from below */
   background:
-    linear-gradient(180deg,
+    linear-gradient(118deg,
       rgb(255 255 255 / var(--frame-gloss)) 0%,
-      rgb(255 255 255 / calc(var(--frame-gloss) * .25)) 48%,
-      rgb(255 255 255 / 0) 70%),
-    linear-gradient(180deg, var(--frame-bg), var(--frame-bg-deep));
+      rgb(255 255 255 / calc(var(--frame-gloss) * .25)) 44%,
+      rgb(255 255 255 / 0) 68%),
+    linear-gradient(118deg, var(--frame-bg), var(--frame-bg-deep));
   border-bottom: 1px solid var(--frame-border);
   box-shadow: inset 0 -9px 16px -9px rgb(var(--phosphor-rgb) / var(--frame-underglow));
   cursor: grab;

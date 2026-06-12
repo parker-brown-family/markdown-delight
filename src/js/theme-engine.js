@@ -87,7 +87,9 @@ function derivePalette(hex) {
     const l = Math.max(30, Math.min(80, hsl.l));
     const grey = (lt) => toHex(hslToRgb({ h: 0, s: 0, l: Math.max(4, Math.min(96, lt)) }));
     const g = (lt) => { const h = grey(lt); return { hex: h, rgb: hexToRgb(h) }; };
-    const accent = g(l), strong = g(l + 22), complement = g(l + 14), field = g(l - 4), warm = g(l + 8);
+    /* complement drives the SHELL — in mono make it much lighter than the
+       tube so the housing separates like a vintage light-grey console */
+    const accent = g(l), strong = g(l + 22), complement = g(Math.min(86, l + 42)), field = g(l - 4), warm = g(l + 8);
     return {
       accent: accent.hex, accentRgb: accent.rgb,
       strong: strong.hex,

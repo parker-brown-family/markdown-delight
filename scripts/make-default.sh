@@ -37,6 +37,19 @@ sed "s|^Exec=.*|Exec=${BIN} %F|" "$DESKTOP_SRC" > "${APPS_DIR}/markdown-delight.
 chmod 644 "${APPS_DIR}/markdown-delight.desktop"
 update-desktop-database "$APPS_DIR" 2>/dev/null || true
 
+# install the CRT-monitor icon at all hicolor sizes (needs imagemagick)
+ICON_SVG="${APP_DIR}/packaging/markdown-delight.svg"
+if command -v convert >/dev/null && [[ -f "$ICON_SVG" ]]; then
+  for s in 32 48 64 128 256; do
+    mkdir -p "${HOME}/.local/share/icons/hicolor/${s}x${s}/apps"
+    convert -background none -resize "${s}x${s}" "$ICON_SVG" \
+      "${HOME}/.local/share/icons/hicolor/${s}x${s}/apps/markdown-delight.png"
+  done
+  mkdir -p "${HOME}/.local/share/icons/hicolor/scalable/apps"
+  cp "$ICON_SVG" "${HOME}/.local/share/icons/hicolor/scalable/apps/"
+  gtk-update-icon-cache "${HOME}/.local/share/icons/hicolor" 2>/dev/null || true
+fi
+
 # claim the Markdown MIME types as the default handler
 xdg-mime default markdown-delight.desktop text/markdown
 xdg-mime default markdown-delight.desktop text/x-markdown

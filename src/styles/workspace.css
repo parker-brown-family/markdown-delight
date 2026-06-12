@@ -9,30 +9,93 @@
 html { font-size: 16px; }
 body {
   font-family: var(--font);
+  font-size: var(--font-size);
   background: var(--bg);
   color: var(--text);
+  text-shadow: var(--phosphor-text-glow);
   height: 100dvh;
   overflow: hidden;
   zoom: var(--ui-scale);
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- global CRT overlay: ONE fixed composited layer, never repaints ---- */
-body::after {
+/* ============================================================
+   THE SCREEN — IMT Field-Terminal CRT stack (two fixed, GPU-composited
+   layers; all strengths come from the tier-3 dials in theme.css).
+
+   body::before — the glass: curved-monitor corner falloff (vignette),
+   center phosphor bloom, scanlines, inset corner shading, slow flicker.
+   body::after  — the tracking band: a slow rolling refresh bar.
+   ============================================================ */
+body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 9999;
-  transform: translateZ(0);            /* promote to its own layer */
+  z-index: 9000;
   background:
-    repeating-linear-gradient(
-      to bottom,
-      rgb(0 0 0 / var(--scanline-opacity)) 0,
-      rgb(0 0 0 / var(--scanline-opacity)) 1px,
+    radial-gradient(ellipse at center,
+      transparent 24%,
+      rgb(0 0 0 / var(--crt-mid)) 63%,
+      rgb(0 0 0 / var(--crt-corner)) 100%),
+    radial-gradient(circle at 50% 42%,
+      rgb(var(--phosphor-rgb) / var(--crt-bloom)) 0,
+      rgb(var(--phosphor-rgb) / calc(var(--crt-bloom) * .39)) 22%,
+      transparent 58%),
+    repeating-linear-gradient(to bottom,
+      rgb(0 0 0 / var(--crt-scan-dark)) 0,
+      rgb(0 0 0 / var(--crt-scan-dark)) 1px,
       transparent 1px,
-      transparent var(--scanline-size)),
-    radial-gradient(ellipse at center, transparent 58%, rgb(0 0 0 / var(--crt-vignette)) 100%);
+      transparent 4px);
+  box-shadow:
+    inset 0 0 80px rgb(0 0 0 / var(--crt-inset-1)),
+    inset 0 0 180px rgb(0 0 0 / var(--crt-inset-2)),
+    inset 0 0 34px rgb(var(--phosphor-rgb) / var(--crt-inset-glow));
+  opacity: var(--crt-opacity);
+  animation: var(--crt-flicker-anim);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  bottom: auto;
+  top: 0;
+  height: 160px;
+  pointer-events: none;
+  z-index: 9001;
+  background:
+    linear-gradient(to bottom,
+      transparent 0%,
+      rgb(var(--phosphor-rgb) / .048) 36%,
+      rgb(255 255 255 / .018) 50%,
+      rgb(var(--phosphor-rgb) / .042) 64%,
+      transparent 100%),
+    repeating-linear-gradient(to bottom,
+      rgb(0 0 0 / .48) 0,
+      rgb(0 0 0 / .48) 2px,
+      transparent 2px,
+      transparent 4px);
+  opacity: var(--crt-track-opacity);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 24%, black 76%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 24%, black 76%, transparent 100%);
+  transform: translate3d(0, var(--crt-track-resting), 0);
+  will-change: transform;
+  animation: var(--crt-track-anim);
+}
+
+@keyframes md-crt-tracking {
+  from { transform: translate3d(0, -220px, 0); }
+  to   { transform: translate3d(0, calc(100vh + 220px), 0); }
+}
+
+@keyframes md-crt-flicker {
+  0%, 100% { opacity: calc(var(--crt-opacity) - .02); }
+  18%      { opacity: calc(var(--crt-opacity) + .02); }
+  19%      { opacity: calc(var(--crt-opacity) - .08); }
+  20%      { opacity: calc(var(--crt-opacity) + .01); }
+  63%      { opacity: calc(var(--crt-opacity) - .04); }
+  64%      { opacity: calc(var(--crt-opacity) + .04); }
 }
 
 /* ============================================================ workspace shell */
@@ -44,6 +107,10 @@ body::after {
   height: 40px; padding: 0 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  filter: var(--panel-filter);
+  /* filter creates a stacking context; keep the whole bar (and its dropdown
+     theme panel) above the panes area, which comes later in the DOM */
+  position: relative; z-index: 200;
 }
 .brand {
   font-family: var(--font-mono); font-weight: 800; font-size: 13px;
@@ -112,6 +179,7 @@ body::after {
   border-radius: var(--radius);
   overflow: hidden;
   box-shadow: var(--shadow-panel);
+  filter: var(--panel-filter);
 }
 .pane.is-focused { border-color: var(--border-strong); box-shadow: var(--shadow-panel), 0 0 0 1px rgb(var(--theme-accent-rgb) / .35); }
 
@@ -175,39 +243,140 @@ body::after {
 .kv dt { color: var(--text-faint); text-transform: uppercase; letter-spacing: .5px; }
 .kv dd { color: var(--text); }
 
-/* ============================================================ theme menu */
-.theme-menu { position: relative; }
+/* ============================================================ theme menu
+   Spec-faithful port of the IMT navbar theme menu (style.css §theme-menu):
+   trigger = active-theme icon + live swatch dot · panel = THEME icon grid
+   + SEED COLOUR wheel/swatches + reset link. Tooltips are title attrs.
+   ============================================================ */
+.theme-menu { display: inline-flex; position: relative; z-index: 130; }
+
 .theme-menu-trigger {
-  display: grid; place-items: center; width: 30px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; gap: .35rem;
+  appearance: none; min-height: 1.85rem; padding: .2rem .42rem;
   border: 1px solid var(--border); border-radius: 999px;
-  background: var(--surface-alt); cursor: pointer;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--text-muted); cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
 }
-.theme-menu-trigger::after {
-  content: ""; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .8);
+.theme-menu-trigger:hover,
+.theme-menu.is-open .theme-menu-trigger {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text);
 }
+.theme-menu-trigger-icon { display: inline-flex; align-items: center; justify-content: center; line-height: 1; height: 1.05rem; width: 1.05rem; font-family: var(--font-mono); font-size: .8rem; font-weight: 800; }
+.theme-menu-trigger-icon svg { display: block; height: 1.05rem; width: 1.05rem; }
+.theme-menu-trigger-swatch {
+  display: block; height: .62rem; width: .62rem; border-radius: 999px;
+  background: var(--theme-accent, var(--accent));
+  border: 1px solid rgb(0 0 0 / .18);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .38),
+              0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .55);
+}
+
 .theme-menu-panel {
-  position: absolute; right: 0; top: 32px; z-index: 50; width: 232px;
-  padding: 12px; border: 1px solid var(--border-strong); border-radius: 10px;
-  background: var(--panel); box-shadow: var(--shadow-panel);
+  position: absolute; inset-block-start: calc(100% + .55rem); inset-inline-end: 0; z-index: 1000;
+  display: flex; flex-direction: column; gap: .75rem;
+  width: min(17.5rem, calc(100vw - 1rem)); padding: .72rem;
+  background: color-mix(in srgb, var(--surface) 96%, #000);
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: var(--shadow-panel);
 }
 .theme-menu-panel[hidden] { display: none; }
-.tm-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; color: var(--text-faint); text-transform: uppercase; margin: 4px 0 6px; }
-.theme-row { display: flex; gap: 6px; margin-bottom: 12px; }
-.theme-switcher-btn {
-  flex: 1; height: 30px; border: 1px solid var(--border); border-radius: 7px;
-  background: transparent; color: var(--text-muted); cursor: pointer; font-size: 14px;
+.theme-menu-section { display: grid; gap: .45rem; }
+.theme-menu-label {
+  color: var(--text-muted); font-family: var(--font-mono);
+  font-size: .68rem; font-weight: 800; line-height: 1; text-transform: uppercase;
 }
-.theme-switcher-btn:hover { color: var(--accent); border-color: var(--accent); }
-.theme-switcher-btn.is-active { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
-.seed-row { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
-.palette-switcher-btn { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.palette-switcher-btn.is-active { border-color: var(--text); }
-input[type="color"][data-theme-accent] { width: 26px; height: 26px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
-.scale-row { display: flex; align-items: center; gap: 8px; }
-.scale-row input[type="range"] { flex: 1; accent-color: var(--accent); }
-.ui-scale-value { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); min-width: 34px; text-align: right; }
+
+/* THEME — 4 icon buttons in a grid, tooltip = title attr */
+.theme-switcher { display: grid; gap: .5rem; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.theme-switcher-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  appearance: none; height: 2.4rem; min-width: 0; padding: 0;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-muted); cursor: pointer; font-family: var(--font-mono);
+  font-size: .9rem; font-weight: 800;
+  transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
+}
+.theme-switcher-btn:hover,
+.theme-switcher-btn.is-active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  color: var(--text);
+  box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .25);
+}
+.theme-switcher-icon { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.theme-switcher-icon svg { display: block; }
+
+/* SEED COLOUR — colour wheel + round swatches (+ Default badge) */
+.palette-switcher { display: inline-flex; align-items: center; gap: .42rem; }
+.palette-color { position: relative; display: inline-flex; align-items: center; justify-content: center; height: 1.65rem; width: 1.65rem; }
+.palette-color input {
+  appearance: none; background: transparent; border: 0; padding: 0;
+  height: 1.45rem; width: 1.45rem; cursor: pointer;
+}
+.palette-color .wheel {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 1.18rem; height: 1.18rem; border-radius: 999px; pointer-events: none;
+  background: conic-gradient(from 0deg, #ff3b3b, #ff9b3b, #ffe53b, #5bff3b, #3bffd5, #3b8bff, #7b3bff, #ff3bd5, #ff3b3b);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .35);
+}
+.palette-switcher-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  appearance: none; height: 1.45rem; width: 1.45rem; padding: 0;
+  background: transparent; border: 1px solid transparent; border-radius: 999px; cursor: pointer;
+}
+.palette-switcher-btn > span[style*="--swatch"] {
+  display: block; height: .9rem; width: .9rem; border-radius: 999px;
+  background: var(--swatch);
+  border: 1px solid rgb(0 0 0 / .18);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35);
+}
+.palette-switcher-btn:hover,
+.palette-switcher-btn.is-active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.palette-switcher-btn-default { position: relative; }
+.palette-switcher-btn .palette-default-badge { display: none; }
+.palette-switcher-btn-default.is-active .palette-default-badge {
+  position: absolute; inset-block-start: calc(100% + .32rem); inset-inline-start: 50%;
+  transform: translateX(-50%); z-index: 20;
+  display: inline-flex; align-items: center; pointer-events: none; white-space: nowrap;
+  padding: .22rem .38rem; border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--accent) 6%);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  box-shadow: 0 8px 18px rgb(0 0 0 / .3);
+  color: var(--text); font-size: .58rem; font-weight: 800;
+  letter-spacing: .06em; line-height: 1; text-transform: uppercase;
+}
+
+/* reset link — "Reset to <theme> default" (clears the Default badge's lane) */
+.theme-reset {
+  appearance: none; background: none; border: 0; padding: 0;
+  margin-block-start: .6rem;
+  color: var(--text-faint); font-family: var(--font-mono); font-size: .72rem;
+  cursor: pointer; text-align: left;
+}
+.theme-reset:hover { color: var(--accent); text-decoration: underline; }
+
+/* ---- ui-scale pill: A ──────● A 106% (lives in the topbar) ---- */
+.ui-scale-control {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .25rem .55rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+}
+.ui-scale-mark { color: var(--text-muted); font-family: var(--font-mono); font-size: .72rem; font-weight: 800; line-height: 1; }
+.ui-scale-mark-large { font-size: .95rem; }
+.ui-scale-slider { accent-color: var(--accent); cursor: ew-resize; inline-size: clamp(4rem, 6vw, 6.5rem); }
+.ui-scale-value {
+  color: var(--text-muted); font-family: var(--font-mono);
+  font-size: .68rem; font-variant-numeric: tabular-nums; font-weight: 800;
+  line-height: 1; min-width: 2.18rem; text-align: right;
+}
 
 /* ============================================================ editor pane
    The source surface. In the browser reference this is a <textarea>; in the

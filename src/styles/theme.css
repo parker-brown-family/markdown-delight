@@ -1,13 +1,18 @@
 /* ============================================================
-   terminal-delight — theme layer
-   Token-driven theming, lifted from the IMT PM engine.
+   markdown-delight — theme layer
+   Token-driven theming, ported from the IMT PM engine and upgraded to the
+   IMT Field-Terminal CRT spec (imt-project-managmenet hacker-theme.css):
+   curved-monitor corner falloff, phosphor bloom, scanlines, flicker, and
+   the slow tracking band — all expressed as tier-3 dials.
 
    Three tiers:
      1. --theme-*   : seed-derived palette, written by theme-engine.js (HSL math)
      2. semantic    : --bg/--surface/--text/--accent... mapped per [data-theme]
-     3. effect      : --scanline-opacity/--glow-radius — the CRT "dial"
-   A theme is just a different mapping of tiers 2+3. Switching = swap one attr.
+     3. effect      : the CRT "dial" — every theme drives the SAME overlay
+                      engine (workspace.css), just with different dial values.
+   Switching = swap one attribute. No re-render.
    ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
 
 :root {
   /* ---- UI scale (driven by the scale slider) ---- */
@@ -15,11 +20,11 @@
   --ui-scale-inverse: 1;
 
   /* ---- seed-derived palette (theme-engine.js overwrites these) ---- */
-  --theme-accent: #22c55e;
-  --theme-accent-rgb: 34 197 94;
-  --theme-accent-strong: #4ade80;
+  --theme-accent: #00783c;
+  --theme-accent-rgb: 0 120 60;
+  --theme-accent-strong: #4fca4f;
   --theme-accent-muted: #3f9963;
-  --theme-accent-dark: #14401f;
+  --theme-accent-dark: #1c401c;
   --theme-accent-ink: #04140a;
   --theme-complement: #67e8f9;
   --theme-complement-rgb: 103 232 249;
@@ -46,21 +51,42 @@
 
   --font:      'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Berkeley Mono', ui-monospace, monospace;
+  --font-size: 16px;
 
   --radius:        8px;
   --radius-sm:     5px;
   --shadow-panel:  0 1px 3px rgb(0 0 0 / .08), 0 8px 24px rgb(0 0 0 / .06);
 
-  /* ---- effect dial: 0 here = no CRT. Themes turn it up. ---- */
-  --scanline-opacity: 0;
-  --scanline-size:    3px;
-  --glow-radius:      0px;
-  --glow-text:        0px;
-  --crt-vignette:     0;
+  /* ============================================================
+     effect dial — the CRT engine (workspace.css overlays read ONLY these).
+     0 everywhere = a flat, effect-free screen. Themes turn the screen on.
+     ============================================================ */
+  --phosphor-rgb: var(--theme-accent-rgb, 0 255 156);
+
+  /* glass layer (body::before): curvature + bloom + scanlines */
+  --crt-opacity:        0;      /* master opacity of the glass layer            */
+  --crt-corner:         0;      /* corner falloff (the curved-monitor illusion)  */
+  --crt-mid:            0;      /* mid-field darkening of the vignette           */
+  --crt-bloom:          0;      /* center phosphor bloom strength                */
+  --crt-scan-dark:      0;      /* scanline darkness (1px per 4px)               */
+  --crt-inset-1:        0;      /* inset shadow: tight corner shading            */
+  --crt-inset-2:        0;      /* inset shadow: wide corner shading             */
+  --crt-inset-glow:     0;      /* inset shadow: phosphor edge glow              */
+  --crt-flicker-anim:   none;   /* set to the flicker animation to enable       */
+
+  /* tracking band (body::after): the slow rolling refresh bar */
+  --crt-track-opacity:  0;
+  --crt-track-anim:     none;
+  --crt-track-resting:  34vh;   /* park position when animation is off          */
+
+  /* element-level effects */
+  --glow-radius:        0px;    /* accent glow on chrome (borders, brand, dots) */
+  --phosphor-text-glow: none;   /* per-glyph glow (hacker only — costly)        */
+  --panel-filter:       none;   /* contrast/saturate pop on chrome panels       */
 }
 
 /* ============================================================
-   quiet-command — calm light theme (effects off)
+   quiet-command — calm light theme (screen off)
    ============================================================ */
 html[data-theme="quiet-command"] {
   color-scheme: light;
@@ -70,7 +96,7 @@ html[data-theme="quiet-command"] {
 }
 
 /* ============================================================
-   field-command — muted dark olive (low glow)
+   field-command — muted dark olive (low glow, faint glass)
    ============================================================ */
 html[data-theme="field-command"] {
   color-scheme: dark;
@@ -88,10 +114,16 @@ html[data-theme="field-command"] {
   --accent-soft:   rgb(var(--theme-accent-rgb, 143 168 95) / .14);
   --warn:          var(--theme-warm, #f5c542);
   --shadow-panel:  0 0 0 1px rgb(var(--theme-accent-rgb, 143 168 95) / .10), 0 14px 34px rgb(0 0 0 / .6);
-  --scanline-opacity: 0.025;
-  --glow-radius:      6px;
-  --crt-vignette:     0.18;
   --font:          var(--font-mono);
+
+  --crt-opacity:    .30;
+  --crt-corner:     .34;
+  --crt-mid:        .08;
+  --crt-bloom:      .05;
+  --crt-scan-dark:  .16;
+  --crt-inset-1:    .30;
+  --crt-inset-2:    .18;
+  --glow-radius:    6px;
 }
 
 /* ============================================================
@@ -113,48 +145,94 @@ html[data-theme="tactical-overdrive"] {
   --accent-soft:   rgb(var(--theme-accent-rgb, 49 215 255) / .14);
   --warn:          var(--theme-warm, #ff9b45);
   --shadow-panel:  0 0 0 1px rgb(var(--theme-accent-rgb, 49 215 255) / .14), 0 18px 46px rgb(0 0 0 / .72);
-  --scanline-opacity: 0.04;
-  --glow-radius:      10px;
-  --glow-text:        0px;
-  --crt-vignette:     0.28;
   --font:          var(--font-mono);
+
+  --crt-opacity:    .50;
+  --crt-corner:     .55;
+  --crt-mid:        .12;
+  --crt-bloom:      .10;
+  --crt-scan-dark:  .26;
+  --crt-inset-1:    .50;
+  --crt-inset-2:    .30;
+  --crt-inset-glow: .04;
+  --crt-track-opacity: .22;
+  --crt-track-anim: md-crt-tracking 9s linear infinite;
+  --glow-radius:    10px;
+  --panel-filter:   contrast(1.03) saturate(1.05);
 }
 
 /* ============================================================
-   hacker — phosphor green CRT (effects maxed) — the hero
+   hacker — phosphor green Field Terminal (the hero; full IMT CRT spec)
    ============================================================ */
 html[data-theme="hacker"] {
   color-scheme: dark;
-  --hacker-depth:   color-mix(in srgb, var(--theme-accent-dark, #14401f) 30%, #020403);
-  --hacker-depth-2: color-mix(in srgb, var(--theme-accent-dark, #14401f) 40%, #050706);
-  --hacker-surface: color-mix(in srgb, var(--theme-accent-dark, #14401f) 30%, #08100d);
-  --hacker-panel:   color-mix(in srgb, var(--theme-accent-dark, #14401f) 26%, rgb(8 15 12 / .9));
+  --hacker-depth:   color-mix(in srgb, var(--theme-accent-dark, #1c401c) 36%, #020403);
+  --hacker-depth-2: color-mix(in srgb, var(--theme-accent-dark, #1c401c) 42%, #050706);
+  --hacker-surface: color-mix(in srgb, var(--theme-accent-dark, #1c401c) 34%, #08100d);
+  --hacker-panel:   color-mix(in srgb, var(--theme-accent-dark, #1c401c) 29%, rgb(8 15 12 / .88));
 
   --bg:            var(--hacker-depth);
   --surface:       var(--hacker-surface);
-  --surface-alt:   color-mix(in srgb, var(--theme-accent-dark, #14401f) 40%, #0b1410);
+  --surface-alt:   color-mix(in srgb, var(--theme-accent-dark, #1c401c) 44%, #0b1410);
   --panel:         var(--hacker-panel);
-  --border:        rgb(var(--theme-accent-rgb, 34 197 94) / .26);
-  --border-strong: rgb(var(--theme-accent-rgb, 34 197 94) / .52);
-  --text:          color-mix(in srgb, var(--theme-accent-strong, #4ade80) 34%, #ecfff4);
-  --text-muted:    rgb(var(--theme-accent-rgb, 34 197 94) / .70);
-  --text-faint:    rgb(var(--theme-accent-rgb, 34 197 94) / .42);
-  --accent:        var(--theme-accent, #22c55e);
-  --accent-strong: var(--theme-accent-strong, #4ade80);
-  --accent-soft:   rgb(var(--theme-accent-rgb, 34 197 94) / .12);
+  --border:        rgb(var(--theme-accent-rgb, 0 120 60) / .26);
+  --border-strong: rgb(var(--theme-accent-rgb, 0 120 60) / .52);
+  --text:          color-mix(in srgb, var(--theme-accent-strong, #4fca4f) 38%, #f1fff8);
+  --text-muted:    rgb(var(--theme-accent-rgb, 0 120 60) / .70);
+  --text-faint:    rgb(var(--theme-accent-rgb, 0 120 60) / .42);
+  --accent:        var(--theme-accent, #00783c);
+  --accent-strong: var(--theme-accent-strong, #4fca4f);
+  --accent-soft:   rgb(var(--theme-accent-rgb, 0 120 60) / .12);
   --warn:          var(--theme-warm, #f5c542);
   --danger:        #ff4444;
-  --shadow-panel:  0 0 22px rgb(var(--theme-accent-rgb, 34 197 94) / .10), 0 24px 60px rgb(0 0 0 / .84);
+  --shadow-panel:  0 0 22px rgb(var(--theme-accent-rgb, 0 120 60) / .10), 0 24px 60px rgb(0 0 0 / .86);
 
-  --scanline-opacity: 0.07;
-  --scanline-size:    3px;
-  --glow-radius:      9px;
-  --glow-text:        0px;          /* body text stays crisp; glow lives on accents */
-  --crt-vignette:     0.42;
-  --font:          var(--font-mono);
+  /* the Field Terminal face: VT323 phosphor tube */
+  --font:          'VT323', var(--font-mono);
+  --font-size:     18px;
+
+  /* full CRT spec (values lifted verbatim from hacker-theme.css §CRT layer) */
+  --crt-opacity:    .78;
+  --crt-corner:     .82;
+  --crt-mid:        .18;
+  --crt-bloom:      .18;
+  --crt-scan-dark:  .44;
+  --crt-inset-1:    .78;
+  --crt-inset-2:    .56;
+  --crt-inset-glow: .06;
+  --crt-flicker-anim: md-crt-flicker 5.6s steps(5, end) infinite;
+  --crt-track-opacity: .46;
+  --crt-track-anim: md-crt-tracking 7s linear infinite;
+  --glow-radius:    9px;
+  --phosphor-text-glow: 0 0 5px rgb(var(--phosphor-rgb) / .24);
+  --panel-filter:   contrast(1.04) saturate(1.08);
 }
 
-/* Phosphor bloom on accent surfaces (composited box-shadow, not per-glyph) */
+html[data-theme="hacker"] *,
+html[data-theme="hacker"] *::before,
+html[data-theme="hacker"] *::after { letter-spacing: 0 !important; }
+
+/* Phosphor bloom on the backdrop (composited gradients, never repaint) */
 html[data-theme="hacker"] body { background:
-    radial-gradient(circle at 50% -18%, rgb(var(--theme-accent-rgb, 34 197 94) / .16), transparent 38rem),
+    radial-gradient(circle at 50% -20%, rgb(var(--theme-accent-rgb, 0 255 156) / .16), transparent 36rem),
+    radial-gradient(circle at 15% 10%, rgb(245 197 66 / .06), transparent 24rem),
     linear-gradient(180deg, var(--hacker-depth-2) 0, var(--hacker-depth) 100%); }
+
+html[data-theme="tactical-overdrive"] body { background:
+    radial-gradient(circle at 50% -18%, rgb(var(--theme-accent-rgb, 49 215 255) / .14), transparent 34rem),
+    linear-gradient(180deg, #080d13 0, var(--bg) 100%); }
+
+/* ============================================================
+   FIREFOX PERF (ported from the spec verbatim): Firefox re-blurs
+   per-glyph text-shadows every repaint and composites animated
+   full-screen overlays poorly. Strip the continuous costs there.
+   ============================================================ */
+@supports (-moz-appearance: none) {
+  html[data-theme="hacker"] body,
+  html[data-theme="hacker"] body * { text-shadow: none !important; }
+  html[data-theme] { --crt-flicker-anim: none; --crt-track-anim: none; --panel-filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme] { --crt-flicker-anim: none; --crt-track-anim: none; }
+}

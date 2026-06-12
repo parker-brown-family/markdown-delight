@@ -3,3 +3,6 @@ app/target/
 .claude/
 *.log
 .DS_Store
+
+# local build config (shared target dir is machine-specific)
+app/.cargo/

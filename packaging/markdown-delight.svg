@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- markdown-delight: vintage CRT terminal monitor, phosphor green on purple shell -->
+  <defs>
+    <radialGradient id="tube" cx="38%" cy="32%" r="85%">
+      <stop offset="0%" stop-color="#0e2c18"/>
+      <stop offset="55%" stop-color="#071a0e"/>
+      <stop offset="100%" stop-color="#030a06"/>
+    </radialGradient>
+    <linearGradient id="shell" x1="0" y1="0" x2=".7" y2="1">
+      <stop offset="0%" stop-color="#3c2752"/>
+      <stop offset="45%" stop-color="#2a1a3a"/>
+      <stop offset="100%" stop-color="#1c1028"/>
+    </linearGradient>
+    <linearGradient id="glint" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity=".55"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- shell -->
+  <rect x="14" y="18" width="228" height="172" rx="22" fill="url(#shell)"/>
+  <rect x="14" y="18" width="228" height="172" rx="22" fill="none" stroke="#5b3b7a" stroke-width="3"/>
+
+  <!-- screen -->
+  <rect x="34" y="36" width="188" height="132" rx="14" fill="url(#tube)"/>
+  <rect x="34" y="36" width="188" height="132" rx="14" fill="none" stroke="#0c2014" stroke-width="3"/>
+
+  <!-- scanlines -->
+  <g fill="#000" opacity=".28">
+    <rect x="36" y="44" width="184" height="2"/><rect x="36" y="52" width="184" height="2"/>
+    <rect x="36" y="60" width="184" height="2"/><rect x="36" y="68" width="184" height="2"/>
+    <rect x="36" y="76" width="184" height="2"/><rect x="36" y="84" width="184" height="2"/>
+    <rect x="36" y="92" width="184" height="2"/><rect x="36" y="100" width="184" height="2"/>
+    <rect x="36" y="108" width="184" height="2"/><rect x="36" y="116" width="184" height="2"/>
+    <rect x="36" y="124" width="184" height="2"/><rect x="36" y="132" width="184" height="2"/>
+    <rect x="36" y="140" width="184" height="2"/><rect x="36" y="148" width="184" height="2"/>
+    <rect x="36" y="156" width="184" height="2"/>
+  </g>
+
+  <!-- the markdown glyph, phosphor green with glow -->
+  <g fill="none" stroke="#39ff8e" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" opacity=".92">
+    <path d="M58 138 V76 l24 30 24-30 v62"/>
+    <path d="M150 76 v62"/>
+    <path d="M128 116 l22 24 22-24"/>
+  </g>
+  <g fill="none" stroke="#a6ffc9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".9">
+    <path d="M58 138 V76 l24 30 24-30 v62"/>
+    <path d="M150 76 v62"/>
+    <path d="M128 116 l22 24 22-24"/>
+  </g>
+
+  <!-- glass glint, top-left -->
+  <ellipse cx="78" cy="58" rx="46" ry="20" fill="url(#glint)" transform="rotate(-18 78 58)"/>
+
+  <!-- stand -->
+  <rect x="96" y="190" width="64" height="14" rx="6" fill="#241433"/>
+  <rect x="72" y="204" width="112" height="16" rx="8" fill="url(#shell)" stroke="#5b3b7a" stroke-width="2"/>
+  <!-- power LED -->
+  <circle cx="222" cy="178" r="4" fill="#39ff8e"/>
+</svg>

@@ -5,15 +5,25 @@
 //! keeps its own mode, focus, and crt::Fx — its own desynced tube. Default
 //! mode for the first pane is SOURCE: right-click → open → start typing.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use gpui::{
-    AnyElement, BoxShadow, Context, Entity, FocusHandle, Focusable, HighlightStyle, KeyDownEvent,
-    SharedString, StyledText, Window, canvas, div, linear_color_stop, linear_gradient, point,
-    prelude::*, px, white,
+    AnyElement, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, HighlightStyle,
+    KeyDownEvent, MouseButton, MouseDownEvent, Pixels, ScrollHandle, SharedString, StyledText,
+    Window, canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, white,
 };
 
 use crate::{crt, editor, render, theme, warp};
+
+const LINE_H: f32 = 21.;
+const PAD_X: f32 = 16.;
+const PAD_Y: f32 = 12.;
+/// JetBrains Mono advance width at 13px — good enough for click→column
+const CHAR_W: f32 = 7.8;
 
 /* ================= the shared document ================= */
 
@@ -53,6 +63,8 @@ pub struct MdPane {
     pub closed: bool,
     focus_handle: FocusHandle,
     fx: crt::Fx,
+    scroll: ScrollHandle,
+    tube_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
 }
 
 impl MdPane {
@@ -90,7 +102,47 @@ impl MdPane {
             closed: false,
             focus_handle: cx.focus_handle(),
             fx: crt::Fx::new(seed),
+            scroll: ScrollHandle::new(),
+            tube_bounds: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Keep the cursor row inside the visible window after edits — without
+    /// this, typing while scrolled away LOOKS like a frozen app.
+    fn follow_cursor(&self, cx: &gpui::App) {
+        let Some(b) = *self.tube_bounds.lock().unwrap() else {
+            return;
+        };
+        let h = f32::from(b.size.height);
+        let (line, _) = self.doc.read(cx).editor.line_col();
+        let cursor_y = PAD_Y + line as f32 * LINE_H;
+        let mut off = self.scroll.offset();
+        let visible_y = cursor_y + f32::from(off.y);
+        if visible_y < LINE_H {
+            off.y = px(-(cursor_y - LINE_H * 2.).max(0.));
+            self.scroll.set_offset(off);
+        } else if visible_y > h - LINE_H * 2. {
+            off.y = px(-(cursor_y - h + LINE_H * 3.));
+            self.scroll.set_offset(off);
+        }
+    }
+
+    /// Click → cursor: map a tube-space click to (line, col).
+    fn place_cursor(&mut self, pos: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(b) = *self.tube_bounds.lock().unwrap() else {
+            return;
+        };
+        let off = self.scroll.offset();
+        let y = f32::from(pos.y) - f32::from(b.origin.y) - PAD_Y - f32::from(off.y);
+        let x = f32::from(pos.x) - f32::from(b.origin.x) - PAD_X - f32::from(off.x);
+        self.doc.update(cx, |doc, cx| {
+            let e = &mut doc.editor;
+            let line = ((y / LINE_H).floor().max(0.) as usize).min(e.line_count() - 1);
+            let col = ((x / CHAR_W).round().max(0.) as usize).min(e.line(line).chars().count());
+            e.set_cursor(line, col);
+            cx.notify();
+        });
+        cx.notify();
     }
 
     pub fn title(&self, cx: &gpui::App) -> SharedString {
@@ -158,6 +210,7 @@ impl MdPane {
             true
         });
         if handled {
+            self.follow_cursor(cx);
             cx.notify();
         }
     }
@@ -268,6 +321,12 @@ impl Render for MdPane {
             )))
             .child(SharedString::from(format!("{} · {}", th.name, status)));
 
+        // rail numbers ride the tube's scroll offset so they stay aligned
+        let rail_offset = if editing {
+            f32::from(self.scroll.offset().y)
+        } else {
+            0.
+        };
         let rail = div()
             .flex_none()
             .w(px(38.))
@@ -280,19 +339,22 @@ impl Render for MdPane {
             ))
             .border_r_1()
             .border_color(th.frame_border.alpha(0.3))
-            .flex()
-            .flex_col()
-            .pt_2()
-            .children((1..=rail_count.max(1)).map(|i| {
+            .child(
                 div()
-                    .h(px(21.))
-                    .pr_2()
-                    .text_size(px(10.5))
-                    .text_color(th.frame_faint.alpha(0.45))
+                    .mt(px(8. + rail_offset))
                     .flex()
-                    .justify_end()
-                    .child(SharedString::from(format!("{i}")))
-            }));
+                    .flex_col()
+                    .children((1..=rail_count.max(1)).map(|i| {
+                        div()
+                            .h(px(21.))
+                            .pr_2()
+                            .text_size(px(10.5))
+                            .text_color(th.frame_faint.alpha(0.45))
+                            .flex()
+                            .justify_end()
+                            .child(SharedString::from(format!("{i}")))
+                    })),
+            );
 
         let content: AnyElement = if editing {
             div()
@@ -300,9 +362,11 @@ impl Render for MdPane {
                 .size_full()
                 .overflow_y_scroll()
                 .overflow_x_hidden()
+                .track_scroll(&self.scroll)
                 .px_4()
                 .py_3()
                 .text_size(px(13.))
+                .whitespace_nowrap()
                 .flex()
                 .flex_col()
                 .children(self.source_lines(&th, cx))
@@ -319,16 +383,27 @@ impl Render for MdPane {
                 .into_any_element()
         };
 
+        let tube_store = self.tube_bounds.clone();
         let tube = div()
             .flex_1()
             .min_w_0()
             .relative()
             .overflow_hidden()
             .bg(th.bg)
+            .when(editing, |el| {
+                el.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|pane, ev: &MouseDownEvent, window, cx| {
+                        window.focus(&pane.focus_handle, cx);
+                        pane.place_cursor(ev.position, cx);
+                    }),
+                )
+            })
             .child(
                 div().absolute().inset_0().child(
                     canvas(
                         move |bounds, window, _| {
+                            *tube_store.lock().unwrap() = Some(bounds);
                             let sf = window.scale_factor();
                             warp::register([
                                 f32::from(bounds.origin.x) * sf,
@@ -348,6 +423,8 @@ impl Render for MdPane {
         div()
             .track_focus(&self.focus_handle(cx))
             .on_key_down(cx.listener(Self::on_key))
+            // repaint on wheel so the rail tracks the tube's scroll offset
+            .on_scroll_wheel(cx.listener(|_, _: &gpui::ScrollWheelEvent, _, cx| cx.notify()))
             .size_full()
             .flex()
             .flex_col()

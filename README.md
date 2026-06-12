@@ -58,7 +58,10 @@ Requires the sibling `../zed-upstream` checkout (the pinned `gpui` source). See
 | Native: GPUI window opens any `.md` (G0a) | ✅ |
 | Native: **rendered Markdown** — comrak AST → GPUI elements, no webview (G0d) | ✅ |
 | Registered as the system default `.md` handler (right-click → opens us) | ✅ on this box |
-| Native: editor core (rope buffer, cursor, edit loop) — **G0b** | ⏭ next |
+| Native: **monitor-wrap CRT** — master frame, per-screen frames, scanlines, tracking, flicker, jiggle, barrel warp | ✅ |
+| Native: hot-reload theme (`~/.config/markdown-delight/theme.toml`) | ✅ |
+| Native: **EDITING** — Ctrl+E source mode (rope + cursor), Ctrl+S atomic save — **G0b PASSED** | ✅ |
+| Selections, undo, find · tabs/splits | ⏭ next |
 
 ![native render, hacker theme](assets/preview-hacker-render.png)
 

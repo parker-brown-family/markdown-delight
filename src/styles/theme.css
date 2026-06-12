@@ -254,15 +254,16 @@ html[data-theme="hacker"] *,
 html[data-theme="hacker"] *::before,
 html[data-theme="hacker"] *::after { letter-spacing: 0 !important; }
 
-/* Phosphor bloom on the backdrop (composited gradients, never repaint) */
+/* Phosphor bloom on the backdrop — the room light sits up-left, like a
+   window over the operator's shoulder (composited gradients, never repaint) */
 html[data-theme="hacker"] body { background:
-    radial-gradient(circle at 50% -20%, rgb(var(--theme-accent-rgb, 0 255 156) / .16), transparent 36rem),
-    radial-gradient(circle at 15% 10%, rgb(245 197 66 / .06), transparent 24rem),
-    linear-gradient(180deg, var(--hacker-depth-2) 0, var(--hacker-depth) 100%); }
+    radial-gradient(ellipse 46rem 30rem at 18% -10%, rgb(var(--theme-accent-rgb, 0 255 156) / .16), transparent 80%),
+    radial-gradient(circle at 12% 8%, rgb(245 197 66 / .07), transparent 24rem),
+    linear-gradient(118deg, var(--hacker-depth-2) 0, var(--hacker-depth) 100%); }
 
 html[data-theme="tactical-overdrive"] body { background:
-    radial-gradient(circle at 50% -18%, rgb(var(--theme-accent-rgb, 49 215 255) / .14), transparent 34rem),
-    linear-gradient(180deg, #080d13 0, var(--bg) 100%); }
+    radial-gradient(ellipse 44rem 28rem at 18% -10%, rgb(var(--theme-accent-rgb, 49 215 255) / .14), transparent 80%),
+    linear-gradient(118deg, #080d13 0, var(--bg) 100%); }
 
 /* ============================================================
    FIREFOX PERF (ported from the spec verbatim): Firefox re-blurs

@@ -1,0 +1,5 @@
+# Share the zed-upstream target dir so gpui's dependency artifacts compile once,
+# not once per workspace (and reuse terminal-delight's already-built gpui crates).
+# Remove when we move to a published gpui.
+[build]
+target-dir = "/home/pbrown/BROWN-FAMILY-SPORTS/Software/zed-upstream/target"

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=markdown-delight
+GenericName=Markdown Editor
+Comment=Tabful, tiling, themeable Markdown editor
+# %F = the file(s) the file manager hands us on double-click
+Exec=markdown-delight %F
+Icon=markdown-delight
+Terminal=false
+Categories=Utility;TextEditor;Development;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true
+StartupWMClass=markdown-delight

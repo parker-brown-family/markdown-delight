@@ -1,0 +1,28 @@
+[package]
+name = "markdown-delight"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app polished, themeable, settable as the default .md handler"
+
+# gpui consumed from the pinned zed-upstream checkout — the SAME pin terminal-delight
+# proved on this box (X11 · NVIDIA · wgpu renderer). Apache-2.0; MIT-compatible.
+# Zed's editor/markdown/rope/text/language crates are GPL-3.0 → STUDY ONLY, never a dep.
+# (docs/PLAN.md §2). Switch to git+rev form when we publish.
+[dependencies]
+comrak = "0.52.0"
+gpui = { path = "../../zed-upstream/crates/gpui" }
+gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
+
+# The editor core's own MIT/permissive deps land at G0b, not before:
+#   ropey      = "1"     # rope buffer
+#   tree-sitter, tree-sitter-md  # incremental syntax highlight
+#   comrak     = "0.2x"  # CommonMark + GFM → AST for preview
+#   notify     = "6"     # external-change detection
+
+[profile.dev]
+# gpui is heavy; keep our own code debuggable but deps optimized
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2

@@ -13,6 +13,12 @@ description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app p
 comrak = "0.52.0"
 gpui = { path = "../../zed-upstream/crates/gpui" }
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# terminal-delight's td-crt-pass patch (barrel warp + crt rects) lives here
+gpui_wgpu = { path = "../../zed-upstream/crates/gpui_wgpu" }
 
 # The editor core's own MIT/permissive deps land at G0b, not before:
 #   ropey      = "1"     # rope buffer

@@ -17,7 +17,13 @@ const DEFAULT_ACCENTS = {
   'quiet-command': '#2f6fdd',
   'field-command': '#8fa85f',
   'tactical-overdrive': '#31d7ff',
-  hacker: '#22c55e',
+  hacker: '#00783c',            // IMT Field-Terminal deep green (spec default)
+};
+const THEME_LABELS = {
+  'quiet-command': 'Quiet Command',
+  'field-command': 'Field Command',
+  'tactical-overdrive': 'Tactical Overdrive',
+  hacker: 'Hacker',
 };
 const THEMES = new Set(Object.keys(DEFAULT_ACCENTS));
 const DARK = new Set(['field-command', 'tactical-overdrive', 'hacker']);
@@ -125,12 +131,24 @@ function applyTheme(theme, persist, broadcast = true) {
   root.setAttribute('data-theme', next);
   root.style.colorScheme = DARK.has(next) ? 'dark' : 'light';
   applyPalette(readAccent(next), false, next, false);
+  let activeBtn = null;
   document.querySelectorAll('[data-theme-value]').forEach(b => {
     const active = b.dataset.themeValue === next;
+    if (active) activeBtn = b;
     b.classList.toggle('is-active', active);
     b.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
   document.querySelector('[data-active-theme-label]') && (document.querySelector('[data-active-theme-label]').textContent = next);
+  // spec behaviors: trigger shows the active theme's icon; reset link names the theme
+  const label = THEME_LABELS[next] || next;
+  const triggerIcon = document.querySelector('[data-active-theme-icon]');
+  if (triggerIcon && activeBtn) {
+    const icon = activeBtn.querySelector('[data-theme-icon]');
+    if (icon) triggerIcon.innerHTML = icon.innerHTML;
+  }
+  const trigger = document.querySelector('[data-theme-menu-trigger]');
+  if (trigger) trigger.title = `${label}, ${readAccent(next)}`;
+  document.querySelectorAll('[data-theme-reset]').forEach(b => { b.textContent = `Reset to ${label} default`; });
   if (persist) set(STORAGE_KEY, next);
   if (broadcast && channel) channel.postMessage({ kind: 'theme', theme: next });
 }
@@ -168,6 +186,7 @@ function bindControls() {
     if (trigger) { const m = trigger.closest('[data-theme-menu]'); if (m) { const p = m.querySelector('[data-theme-menu-panel]'); const willOpen = p ? p.hidden : !m.classList.contains('is-open'); closeMenus(m); setMenuOpen(m, willOpen); return; } }
     const tBtn = e.target.closest?.('[data-theme-value]'); if (tBtn) { applyTheme(tBtn.dataset.themeValue, true); return; }
     const pBtn = e.target.closest?.('[data-palette-value]'); if (pBtn) { applyPalette(pBtn.dataset.paletteValue, true); return; }
+    const rBtn = e.target.closest?.('[data-theme-reset]'); if (rBtn) { resetAccent(); return; }
     if (e.target.closest?.('[data-theme-menu]')) return;
     closeMenus(null);
   });

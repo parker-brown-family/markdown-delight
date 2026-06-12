@@ -62,14 +62,26 @@ Requires the sibling `../zed-upstream` checkout (the pinned `gpui` source). See
 
 ![native render, hacker theme](assets/preview-hacker-render.png)
 
-## Themes
+## Themes — the IMT Field-Terminal CRT spec
 
-Inherited from terminal-delight, same 3-tier engine (`src/styles/theme.css`):
+Same 3-tier engine as terminal-delight (`src/styles/theme.css`), upgraded to the full
+IMT PM Field-Terminal CRT spec:
 
 1. **seed palette** — `theme-engine.js` runs a seed hex through HSL math → `--theme-*` vars.
+   One hex reshapes the whole screen (the maroon shot below is `?seed=%23a04438`).
 2. **semantic tokens** — each `html[data-theme=…]` maps those to `--bg / --surface / --text / --accent …`.
-3. **effect dial** — `--scanline-opacity / --glow-radius / --crt-vignette`. `hacker` maxes
-   them; `quiet-command` zeroes them. **Same engine, different dial.**
+3. **effect dial — the CRT engine.** Two fixed, GPU-composited layers driven entirely by
+   per-theme dials: **curved-monitor corner falloff** (vignette + inset corner shading),
+   **center phosphor bloom**, **scanlines**, **slow flicker**, and the **rolling tracking
+   band**. `hacker` runs the full tube (VT323 phosphor face, per-glyph glow);
+   `tactical-overdrive` a cooler glass; `quiet-command` turns the screen off entirely.
+   Firefox and `prefers-reduced-motion` automatically shed the costly animated layers.
+
+App-bar theme menu (spec-faithful port of the IMT navbar): active-theme icon + live swatch
+trigger · 4 icon themes with tooltips · seed-colour wheel + swatches with a Default badge ·
+"Reset to … default" · `A ──● A %` UI-scale pill.
+
+![maroon seed, menu open](assets/preview-maroon-seed.png)
 
 `hacker` · `tactical-overdrive` · `field-command` · `quiet-command`.
 

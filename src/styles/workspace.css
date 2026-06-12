@@ -20,19 +20,19 @@ body {
 }
 
 /* ============================================================
-   THE SCREEN — IMT Field-Terminal CRT stack (two fixed, GPU-composited
-   layers; all strengths come from the tier-3 dials in theme.css).
-
-   body::before — the glass: curved-monitor corner falloff (vignette),
-   center phosphor bloom, scanlines, inset corner shading, slow flicker.
-   body::after  — the tracking band: a slow rolling refresh bar.
+   THE SCREENS — IMT Field-Terminal CRT stack, ONE TUBE PER PANE.
+   The workspace chrome (topbar, tabs, pane heads/file names, splitters,
+   line-number gutters) is the SOLID console housing — no glass on it.
+   Each .pane-body is an embedded CRT: its own curvature falloff, phosphor
+   bloom, scanlines, flicker, and rolling tracking band, clipped to the
+   screen. All strengths come from the tier-3 dials in theme.css.
    ============================================================ */
-body::before {
+.pane-body::before {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 9000;
+  z-index: 5;
   background:
     radial-gradient(ellipse at center,
       transparent 24%,
@@ -48,22 +48,22 @@ body::before {
       transparent 1px,
       transparent 4px);
   box-shadow:
-    inset 0 0 80px rgb(0 0 0 / var(--crt-inset-1)),
-    inset 0 0 180px rgb(0 0 0 / var(--crt-inset-2)),
-    inset 0 0 34px rgb(var(--phosphor-rgb) / var(--crt-inset-glow));
+    inset 0 0 46px rgb(0 0 0 / var(--crt-inset-1)),
+    inset 0 0 110px rgb(0 0 0 / var(--crt-inset-2)),
+    inset 0 0 22px rgb(var(--phosphor-rgb) / var(--crt-inset-glow));
   opacity: var(--crt-opacity);
   animation: var(--crt-flicker-anim);
 }
 
-body::after {
+.pane-body::after {
   content: "";
-  position: fixed;
-  inset: 0;
-  bottom: auto;
+  position: absolute;
+  left: 0;
+  right: 0;
   top: 0;
-  height: 160px;
+  height: 140px;
   pointer-events: none;
-  z-index: 9001;
+  z-index: 6;
   background:
     linear-gradient(to bottom,
       transparent 0%,
@@ -84,6 +84,10 @@ body::after {
   animation: var(--crt-track-anim);
 }
 
+/* desync the tubes — siblings track on their own clocks, like real hardware */
+.split > .node:last-child .pane-body::after { animation-duration: 8.7s; animation-delay: -3.2s; }
+.split .split > .node:first-child .pane-body::after { animation-duration: 7.9s; animation-delay: -1.4s; }
+
 @keyframes md-crt-tracking {
   from { transform: translate3d(0, -220px, 0); }
   to   { transform: translate3d(0, calc(100vh + 220px), 0); }
@@ -103,13 +107,12 @@ body::after {
 
 /* ---- top bar: brand + tabs + theme menu ---- */
 .topbar {
+  /* part of the SOLID console housing — no screen filter, no glass */
   display: flex; align-items: center; gap: 10px;
   height: 40px; padding: 0 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  filter: var(--panel-filter);
-  /* filter creates a stacking context; keep the whole bar (and its dropdown
-     theme panel) above the panes area, which comes later in the DOM */
+  /* keep the bar (and its dropdown theme panel) above the panes area */
   position: relative; z-index: 200;
 }
 .brand {
@@ -172,14 +175,14 @@ body::after {
 
 /* ---- leaf pane ---- */
 .pane {
+  /* SOLID housing: bezel border + raised edge; the glass lives in .pane-body */
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  box-shadow: var(--shadow-panel);
-  filter: var(--panel-filter);
+  box-shadow: var(--shadow-panel), inset 0 1px 0 rgb(255 255 255 / .04);
 }
 .pane.is-focused { border-color: var(--border-strong); box-shadow: var(--shadow-panel), 0 0 0 1px rgb(var(--theme-accent-rgb) / .35); }
 
@@ -189,6 +192,8 @@ body::after {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   cursor: grab;
+  /* file name etc. belong to the solid housing — crisp, no tube glow */
+  text-shadow: none;
 }
 .pane-head:active { cursor: grabbing; }
 .pane-title {
@@ -208,7 +213,11 @@ body::after {
 .pane-tools button.close:hover { color: var(--danger); }
 .pane-tools svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 
-.pane-body { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.pane-body {
+  flex: 1; min-height: 0; position: relative; overflow: hidden;
+  /* the screen itself: spec contrast/saturate pop applies to the tube only */
+  filter: var(--panel-filter);
+}
 
 /* drop overlay shown while dragging a pane head */
 .pane.drop-target::before {
@@ -389,6 +398,9 @@ body::after {
   color: var(--text-faint); user-select: none;
   border-right: 1px solid var(--border); background: var(--surface);
   white-space: pre;
+  /* line numbers are part of the SOLID frame — sit above the pane's glass */
+  position: relative; z-index: 7;
+  text-shadow: none;
 }
 .editor .src {
   flex: 1; min-width: 0; padding: 12px 14px;

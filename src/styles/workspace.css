@@ -106,12 +106,21 @@ body {
 .workspace { display: flex; flex-direction: column; height: 100dvh; }
 
 /* ---- top bar: brand + tabs + theme menu ---- */
+/* glossy complement-coloured shell: specular sheen over the frame colour,
+   with the screens' phosphor underglow bleeding up from below */
 .topbar {
-  /* part of the SOLID console housing — no screen filter, no glass */
   display: flex; align-items: center; gap: 10px;
   height: 40px; padding: 0 10px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg,
+      rgb(255 255 255 / var(--frame-gloss)) 0%,
+      rgb(255 255 255 / calc(var(--frame-gloss) * .3)) 42%,
+      rgb(255 255 255 / 0) 64%),
+    linear-gradient(180deg, var(--frame-bg), var(--frame-bg-deep));
+  border-bottom: 1px solid var(--frame-border);
+  box-shadow: inset 0 -12px 22px -12px rgb(var(--phosphor-rgb) / calc(var(--frame-underglow) * .7));
+  color: var(--frame-text);
+  text-shadow: none;
   /* keep the bar (and its dropdown theme panel) above the panes area */
   position: relative; z-index: 200;
 }
@@ -131,15 +140,16 @@ body {
   display: flex; align-items: center; gap: 7px;
   height: 28px; padding: 0 8px 0 11px; max-width: 220px;
   border: 1px solid transparent; border-radius: var(--radius-sm);
-  background: transparent; color: var(--text-muted);
+  background: transparent; color: var(--frame-text-faint);
   font-family: var(--font-mono); font-size: 12.5px;
   cursor: pointer; user-select: none; white-space: nowrap;
 }
-.tab:hover { background: var(--surface-alt); color: var(--text); }
+.tab:hover { background: rgb(var(--frame-accent-rgb) / .10); color: var(--frame-text); }
 .tab.is-active {
-  background: var(--accent-soft); color: var(--accent-strong);
-  border-color: var(--border-strong);
-  box-shadow: 0 0 var(--glow-radius) rgb(var(--theme-accent-rgb) / .25);
+  background: rgb(var(--frame-accent-rgb) / .16); color: var(--frame-text);
+  border-color: var(--frame-border);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / calc(var(--frame-gloss) * .8)),
+              0 0 var(--glow-radius) rgb(var(--frame-accent-rgb) / .22);
 }
 .tab .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .8; }
 .tab .label { overflow: hidden; text-overflow: ellipsis; }
@@ -148,10 +158,10 @@ body {
 .tab.drag-over { border-color: var(--accent); }
 .tab-add {
   display: grid; place-items: center; width: 26px; height: 26px;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: transparent; color: var(--text-muted); cursor: pointer; font-size: 15px;
+  border: 1px solid var(--frame-border); border-radius: var(--radius-sm);
+  background: transparent; color: var(--frame-text-faint); cursor: pointer; font-size: 15px;
 }
-.tab-add:hover { color: var(--accent); border-color: var(--accent); }
+.tab-add:hover { color: var(--frame-accent); border-color: var(--frame-accent); }
 
 /* ============================================================ tiling area */
 .panes { position: relative; flex: 1; min-height: 0; padding: 8px; }
@@ -162,12 +172,15 @@ body {
 .node.split > .node { position: relative; inset: auto; flex: 1 1 0; min-width: 0; min-height: 0; }
 
 /* splitter handle — drag to resize, like tilix dividers */
-.splitter { flex: 0 0 6px; position: relative; z-index: 2; }
+.splitter { flex: 0 0 6px; position: relative; z-index: 2;
+  /* shell between two tubes — catches a little phosphor from both sides */
+  background: rgb(var(--phosphor-rgb) / calc(var(--frame-underglow) * .10));
+}
 .splitter.row { cursor: col-resize; }
 .splitter.col { cursor: row-resize; }
 .splitter::after {
   content: ""; position: absolute; inset: 0; margin: auto;
-  background: var(--border);
+  background: var(--frame-border);
 }
 .splitter.row::after { width: 1px; }
 .splitter.col::after { height: 1px; }
@@ -175,22 +188,29 @@ body {
 
 /* ---- leaf pane ---- */
 .pane {
-  /* SOLID housing: bezel border + raised edge; the glass lives in .pane-body */
+  /* the shell: complement-coloured bezel border; the glass lives in .pane-body */
   position: absolute; inset: 0;
   display: flex; flex-direction: column;
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--frame-border);
   border-radius: var(--radius);
   overflow: hidden;
-  box-shadow: var(--shadow-panel), inset 0 1px 0 rgb(255 255 255 / .04);
+  box-shadow: var(--shadow-panel), inset 0 1px 0 rgb(255 255 255 / calc(var(--frame-gloss) * .6));
 }
-.pane.is-focused { border-color: var(--border-strong); box-shadow: var(--shadow-panel), 0 0 0 1px rgb(var(--theme-accent-rgb) / .35); }
+.pane.is-focused { box-shadow: var(--shadow-panel), 0 0 0 1px rgb(var(--frame-accent-rgb) / .45), 0 0 var(--glow-radius) rgb(var(--frame-accent-rgb) / .25); }
 
 .pane-head {
   display: flex; align-items: center; gap: 8px;
   height: 28px; padding: 0 6px 0 10px; flex: 0 0 auto;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  /* glossy shell strip with the tube's underglow rising from below */
+  background:
+    linear-gradient(180deg,
+      rgb(255 255 255 / var(--frame-gloss)) 0%,
+      rgb(255 255 255 / calc(var(--frame-gloss) * .25)) 48%,
+      rgb(255 255 255 / 0) 70%),
+    linear-gradient(180deg, var(--frame-bg), var(--frame-bg-deep));
+  border-bottom: 1px solid var(--frame-border);
+  box-shadow: inset 0 -9px 16px -9px rgb(var(--phosphor-rgb) / var(--frame-underglow));
   cursor: grab;
   /* file name etc. belong to the solid housing — crisp, no tube glow */
   text-shadow: none;
@@ -198,18 +218,18 @@ body {
 .pane-head:active { cursor: grabbing; }
 .pane-title {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); letter-spacing: .4px;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--frame-text); letter-spacing: .4px;
 }
-.pane-title::before { content: "▸ "; color: var(--accent); }
+.pane-title::before { content: "▸ "; color: var(--frame-accent); }
 
 /* the triple-button cluster (split-right / split-down / detach) + close */
 .pane-tools { display: flex; align-items: center; gap: 2px; }
 .pane-tools button {
   display: grid; place-items: center; width: 22px; height: 20px;
-  border: 0; background: transparent; color: var(--text-faint);
+  border: 0; background: transparent; color: var(--frame-text-faint);
   cursor: pointer; border-radius: 4px;
 }
-.pane-tools button:hover { color: var(--accent); background: var(--accent-soft); }
+.pane-tools button:hover { color: var(--frame-accent); background: rgb(var(--frame-accent-rgb) / .14); }
 .pane-tools button.close:hover { color: var(--danger); }
 .pane-tools svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 
@@ -262,9 +282,9 @@ body {
 .theme-menu-trigger {
   display: inline-flex; align-items: center; justify-content: center; gap: .35rem;
   appearance: none; min-height: 1.85rem; padding: .2rem .42rem;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 84%, transparent);
-  color: var(--text-muted); cursor: pointer;
+  border: 1px solid var(--frame-border); border-radius: 999px;
+  background: color-mix(in srgb, var(--frame-bg) 84%, transparent);
+  color: var(--frame-text); cursor: pointer;
   transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
 }
 .theme-menu-trigger:hover,
@@ -375,10 +395,10 @@ body {
 .ui-scale-control {
   display: inline-flex; align-items: center; gap: .35rem;
   padding: .25rem .55rem;
-  border: 1px solid var(--border); border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  border: 1px solid var(--frame-border); border-radius: 999px;
+  background: color-mix(in srgb, var(--frame-bg) 84%, transparent);
 }
-.ui-scale-mark { color: var(--text-muted); font-family: var(--font-mono); font-size: .72rem; font-weight: 800; line-height: 1; }
+.ui-scale-mark { color: var(--frame-text); font-family: var(--font-mono); font-size: .72rem; font-weight: 800; line-height: 1; }
 .ui-scale-mark-large { font-size: .95rem; }
 .ui-scale-slider { accent-color: var(--accent); cursor: ew-resize; inline-size: clamp(4rem, 6vw, 6.5rem); }
 .ui-scale-value {
@@ -395,8 +415,15 @@ body {
 .editor .gutter {
   flex: 0 0 auto; padding: 12px 8px 12px 12px; text-align: right;
   font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6;
-  color: var(--text-faint); user-select: none;
-  border-right: 1px solid var(--border); background: var(--surface);
+  color: var(--frame-text-faint); user-select: none;
+  border-right: 1px solid var(--frame-border);
+  /* shell rail beside the tube: glossy, with the screen's glow leaking in */
+  background:
+    linear-gradient(90deg,
+      rgb(255 255 255 / calc(var(--frame-gloss) * .5)) 0%,
+      rgb(255 255 255 / 0) 55%),
+    linear-gradient(90deg, var(--frame-bg), var(--frame-bg-deep));
+  box-shadow: inset -12px 0 18px -12px rgb(var(--phosphor-rgb) / var(--frame-underglow));
   white-space: pre;
   /* line numbers are part of the SOLID frame — sit above the pane's glass */
   position: relative; z-index: 7;

@@ -1,0 +1,13 @@
+{
+  "name": "markdown-delight",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A tabful, tiling Linux Markdown editor: open any .md into a themeable, native-snappy source|preview surface; settable as the system default. Browser design reference is zero-build ES modules.",
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 4323",
+    "dev:vite": "vite --port 4323"
+  },
+  "keywords": ["markdown", "editor", "tiling", "tabs", "theme", "crt", "gpui", "commonmark", "gfm"],
+  "license": "MIT"
+}

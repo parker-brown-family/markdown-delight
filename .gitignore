@@ -1,0 +1,5 @@
+node_modules/
+app/target/
+.claude/
+*.log
+.DS_Store

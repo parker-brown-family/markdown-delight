@@ -83,6 +83,22 @@
   --glow-radius:        0px;    /* accent glow on chrome (borders, brand, dots) */
   --phosphor-text-glow: none;   /* per-glyph glow (hacker only — costly)        */
   --panel-filter:       none;   /* contrast/saturate pop on chrome panels       */
+
+  /* ============================================================
+     THE HOUSING — the solid frame around the tubes (topbar, tabs, pane
+     heads, gutters, splitters). A smooth REFLECTIVE surface in the
+     COMPLEMENT colour (green phosphor → purple shell, cyan → orange),
+     with the screens' phosphor UNDERGLOW bleeding into it.
+     ============================================================ */
+  --frame-accent:      var(--theme-complement, #67e8f9);
+  --frame-accent-rgb:  var(--theme-complement-rgb, 103 232 249);
+  --frame-bg:          var(--surface);      /* quiet default: plain housing */
+  --frame-bg-deep:     var(--surface-alt);
+  --frame-border:      var(--border);
+  --frame-text:        var(--text-muted);
+  --frame-text-faint:  var(--text-faint);
+  --frame-gloss:       0;                   /* specular sheen strength       */
+  --frame-underglow:   0;                   /* phosphor bleed into the shell */
 }
 
 /* ============================================================
@@ -124,6 +140,14 @@ html[data-theme="field-command"] {
   --crt-inset-1:    .30;
   --crt-inset-2:    .18;
   --glow-radius:    6px;
+
+  --frame-bg:        color-mix(in srgb, var(--frame-accent) 8%, #0f0d12);
+  --frame-bg-deep:   color-mix(in srgb, var(--frame-accent) 5%, #0a090d);
+  --frame-border:    rgb(var(--frame-accent-rgb) / .26);
+  --frame-text:      color-mix(in srgb, var(--frame-accent) 45%, #cbc6d2);
+  --frame-text-faint: rgb(var(--frame-accent-rgb) / .42);
+  --frame-gloss:     .05;
+  --frame-underglow: .14;
 }
 
 /* ============================================================
@@ -159,6 +183,15 @@ html[data-theme="tactical-overdrive"] {
   --crt-track-anim: md-crt-tracking 9s linear infinite;
   --glow-radius:    10px;
   --panel-filter:   contrast(1.03) saturate(1.05);
+
+  /* cyan phosphor → warm orange shell */
+  --frame-bg:        color-mix(in srgb, var(--frame-accent) 12%, #120b06);
+  --frame-bg-deep:   color-mix(in srgb, var(--frame-accent) 8%, #0c0804);
+  --frame-border:    rgb(var(--frame-accent-rgb) / .32);
+  --frame-text:      color-mix(in srgb, var(--frame-accent) 55%, #e0d2c2);
+  --frame-text-faint: rgb(var(--frame-accent-rgb) / .46);
+  --frame-gloss:     .08;
+  --frame-underglow: .22;
 }
 
 /* ============================================================
@@ -206,6 +239,15 @@ html[data-theme="hacker"] {
   --glow-radius:    9px;
   --phosphor-text-glow: 0 0 5px rgb(var(--phosphor-rgb) / .24);
   --panel-filter:   contrast(1.04) saturate(1.08);
+
+  /* green phosphor → glossy purple shell (the PM-Assistant sub-terminal look) */
+  --frame-bg:        color-mix(in srgb, var(--frame-accent) 14%, #0c0712);
+  --frame-bg-deep:   color-mix(in srgb, var(--frame-accent) 9%, #070409);
+  --frame-border:    rgb(var(--frame-accent-rgb) / .36);
+  --frame-text:      color-mix(in srgb, var(--frame-accent) 58%, #d8cfe4);
+  --frame-text-faint: rgb(var(--frame-accent-rgb) / .48);
+  --frame-gloss:     .10;
+  --frame-underglow: .28;
 }
 
 html[data-theme="hacker"] *,

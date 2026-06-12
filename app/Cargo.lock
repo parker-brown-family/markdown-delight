@@ -3558,6 +3558,9 @@ dependencies = [
  "comrak",
  "gpui",
  "gpui_platform",
+ "gpui_wgpu",
+ "serde",
+ "toml 0.8.23",
 ]
 
 [[package]]

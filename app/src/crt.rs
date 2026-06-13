@@ -134,6 +134,8 @@ impl Fx {
     }
 
     /// True while an animation needs frame-rate ticks (else the ticker can idle).
+    /// Kept for a future ticker-idle optimization; not yet wired into the loop.
+    #[allow(dead_code)]
     pub fn active(&self) -> bool {
         self.band.is_some() || self.jiggle_px != 0. || self.flicker_mul != 1.0
     }

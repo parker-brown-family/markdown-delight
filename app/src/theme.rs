@@ -9,6 +9,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::Arc,
+    sync::atomic::{AtomicU32, Ordering},
     time::{Duration, SystemTime},
 };
 
@@ -16,6 +17,33 @@ use gpui::{App, Global, Hsla, rgb};
 use serde::Deserialize;
 
 pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
+
+/// Bundled themes, in cycle order. The first is the default. Per-pane theme
+/// overrides pick from here (plus any user themes discovered at runtime).
+pub const BUNDLED_THEMES: &[&str] = &[
+    include_str!("../themes/hacker.toml"),
+    include_str!("../themes/amber.toml"),
+    include_str!("../themes/ice.toml"),
+    include_str!("../themes/paper.toml"),
+];
+
+/// Live text-zoom multiplier driven by the bezel scrubber. Process-global (not
+/// in the hot-reloaded Theme) so the slider can nudge it every drag-frame
+/// without rebuilding the theme. 0 is the "untouched = 1.0" sentinel.
+pub const FONT_SCALE_MIN: f32 = 0.6;
+pub const FONT_SCALE_MAX: f32 = 2.0;
+static FONT_SCALE: AtomicU32 = AtomicU32::new(0);
+
+pub fn font_scale() -> f32 {
+    match FONT_SCALE.load(Ordering::Relaxed) {
+        0 => 1.0,
+        bits => f32::from_bits(bits),
+    }
+}
+
+pub fn set_font_scale(v: f32) {
+    FONT_SCALE.store(v.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX).to_bits(), Ordering::Relaxed);
+}
 
 #[derive(Deserialize)]
 struct FileColors {
@@ -47,6 +75,7 @@ struct FileEffects {
     flicker: Option<f32>,
     jiggle: Option<f32>,
     curvature: Option<f32>,
+    screen_glare: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -90,6 +119,7 @@ pub struct Theme {
     pub flicker: f32,
     pub jiggle: f32,
     pub curvature: f32,
+    pub screen_glare: f32,
     pub font_family: String,
     pub font_size: f32,
 }
@@ -99,6 +129,84 @@ impl Global for ActiveTheme {}
 
 pub fn theme(cx: &App) -> Arc<Theme> {
     cx.global::<ActiveTheme>().0.clone()
+}
+
+/// All selectable themes: bundled + any from ~/.config/markdown-delight/themes.
+/// Built once at init; per-pane theme overrides resolve names against this.
+pub struct ThemeRegistry(pub Vec<Arc<Theme>>);
+impl Global for ThemeRegistry {}
+
+impl ThemeRegistry {
+    pub fn by_name(&self, name: &str) -> Option<Arc<Theme>> {
+        self.0.iter().find(|t| t.name == name).cloned()
+    }
+    /// The theme that follows `name` in cycle order (wraps). Unknown name → first.
+    pub fn next_after(&self, name: &str) -> Option<Arc<Theme>> {
+        if self.0.is_empty() {
+            return None;
+        }
+        let next = match self.0.iter().position(|t| t.name == name) {
+            Some(i) => (i + 1) % self.0.len(),
+            None => 0,
+        };
+        self.0.get(next).cloned()
+    }
+}
+
+/// Look up a theme by name from the global registry (None → global active theme).
+pub fn resolve(cx: &App, name: Option<&str>) -> Arc<Theme> {
+    match name {
+        Some(n) => cx
+            .global::<ThemeRegistry>()
+            .by_name(n)
+            .unwrap_or_else(|| theme(cx)),
+        None => theme(cx),
+    }
+}
+
+/// The theme name to cycle to after `current` (None = global), for the per-pane
+/// theme chip. Always returns Some when the registry is non-empty.
+pub fn cycle_name(cx: &App, current: Option<&str>) -> Option<String> {
+    let reg = cx.global::<ThemeRegistry>();
+    let base = current
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| theme(cx).name.clone());
+    reg.next_after(&base).map(|t| t.name.clone())
+}
+
+fn themes_dir() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".config/markdown-delight/themes"))
+}
+
+/// Bundled themes first (cycle order), then user themes (override by name / append).
+fn build_registry() -> Vec<Arc<Theme>> {
+    let mut out: Vec<Arc<Theme>> = Vec::new();
+    for src in BUNDLED_THEMES {
+        if let Ok(t) = parse(src) {
+            out.push(Arc::new(t));
+        }
+    }
+    if let Some(dir) = themes_dir() {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|s| s.to_str()) != Some("toml") {
+                    continue;
+                }
+                if let Ok(src) = fs::read_to_string(&p) {
+                    if let Ok(t) = parse(&src) {
+                        let t = Arc::new(t);
+                        match out.iter_mut().find(|x| x.name == t.name) {
+                            Some(slot) => *slot = t,
+                            None => out.push(t),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Push the curvature dial into the renderer's CRT warp pass (td-crt-pass patch).
@@ -122,8 +230,10 @@ fn parse(source: &str) -> Result<Theme, String> {
     let opt = |s: &Option<String>, fallback: Hsla| s.as_ref().and_then(|v| hex(v)).unwrap_or(fallback);
     let accent = need(&c.accent, "accent")?;
     let surface = need(&c.surface, "surface")?;
+    let name = file.name.unwrap_or_else(|| "unnamed".into());
+    let default_screen_glare = if name == "hacker" { 0.42 } else { 0.0 };
     Ok(Theme {
-        name: file.name.unwrap_or_else(|| "unnamed".into()),
+        name,
         bg: need(&c.bg, "bg")?,
         surface,
         text: need(&c.text, "text")?,
@@ -144,6 +254,11 @@ fn parse(source: &str) -> Result<Theme, String> {
         flicker: file.effects.flicker.unwrap_or(0.).clamp(0., 1.),
         jiggle: file.effects.jiggle.unwrap_or(0.).clamp(0., 1.),
         curvature: file.effects.curvature.unwrap_or(0.).clamp(0., 1.),
+        screen_glare: file
+            .effects
+            .screen_glare
+            .unwrap_or(default_screen_glare)
+            .clamp(0., 1.),
         font_family: file.font.family.unwrap_or_else(|| "JetBrains Mono".into()),
         font_size: file.font.size.unwrap_or(14.).clamp(8., 32.),
     })
@@ -176,6 +291,7 @@ pub fn init(cx: &mut App) {
         .unwrap_or_else(|| parse(DEFAULT_THEME_TOML).expect("embedded theme parses"));
     apply_warp(&initial);
     cx.set_global(ActiveTheme(Arc::new(initial)));
+    cx.set_global(ThemeRegistry(build_registry()));
 
     let mut last = mtime(&path);
     cx.spawn(async move |cx| {

@@ -12,6 +12,9 @@ description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app p
 [dependencies]
 comrak = "0.52.0"
 gpui = { path = "../../zed-upstream/crates/gpui" }
+# Ctrl+P fuzzy finder: gitignore-aware $HOME walk + Helix's fzf-style matcher
+ignore = "0.4"
+nucleo-matcher = "0.3"
 gpui_platform = { path = "../../zed-upstream/crates/gpui_platform", features = ["x11", "wayland"] }
 ropey = "1.6.1"
 serde = { version = "1.0", features = ["derive"] }

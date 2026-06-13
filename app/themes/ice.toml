@@ -1,0 +1,35 @@
+# markdown-delight theme — ice (cool cyan phosphor tube, warm rust complement shell)
+# Edit this file while the app is running: it hot-reloads. No recompile.
+name = "ice"
+
+[colors]
+bg      = "#04101a"
+surface = "#081e2c"
+text    = "#a8e6ff"
+accent  = "#31d7ff"
+faint   = "#0f3346"
+
+[shell]
+# warm rust housing complements the icy cyan tube
+frame_bg     = "#231009"
+frame_text   = "#e8c2a6"
+frame_border = "#d2773f"
+frame_faint  = "#e59a6f"
+
+[effects]
+scanline_opacity = 0.20
+scanline_step    = 4.0
+vignette         = 0.8
+glow             = 0.82
+bloom            = 0.88
+tracking         = 0.55
+tracking_period  = 15.0
+tracking_sweep   = 7.0
+flicker          = 0.5
+curvature        = 0.45
+screen_glare     = 0.34
+jiggle           = 0.6
+
+[font]
+family = "JetBrains Mono"
+size   = 14.0

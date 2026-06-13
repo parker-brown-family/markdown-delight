@@ -27,7 +27,7 @@ project. Full plan, gates, and the clean-room boundary: **[`docs/PLAN.md`](docs/
 | Path | What it is |
 |---|---|
 | `index.html`, `src/` | **Browser design reference** — zero-build ES modules + CSS custom properties. Ported theme engine + tiling chrome from terminal-delight, with a **live source ▸ preview demo**. The design source of truth for tokens, effect dials, chrome UX, and pane shapes. **Not foundation code.** |
-| `app/` | **Native GPUI app** (Rust, MIT) — the real product. Reuses the pinned `gpui` from `../zed-upstream`. Currently at the **G0a substrate spike**. |
+| `app/` | **Native GPUI app** (Rust, MIT) — the real product. Reuses the pinned `gpui` from `../zed-upstream`. Editing works (G0b passed): edit-by-default, tabs, tiling splits, pane drag-and-drop, per-pane themes, `ctrl+p` finder, session restore. Selections · undo · find are next. |
 
 ## Run the design reference
 
@@ -40,20 +40,30 @@ No build step. Pure ES modules + CSS custom properties.
 
 ## Build the native app
 
+> **Heads-up:** this is an early/WIP build, verified only on **Linux · X11 ·
+> NVIDIA · wgpu (Vulkan)**. Wayland and AMD/Intel are expected to work but are
+> unverified. Full prerequisites + troubleshooting: **[`BUILDING.md`](BUILDING.md)**.
+
 The app consumes `gpui` from a **pinned Zed checkout** as a sibling directory
 (path deps in `app/Cargo.toml`), carrying a small Apache-2.0-compatible render
-patch (`td-crt-pass`) for the per-pane CRT barrel warp:
+patch (`td-crt-pass`, in [`patches/`](patches/)) for the per-pane CRT barrel warp:
 
 ```bash
-# one-time: the pinned gpui source, beside this repo
+# one-time: the pinned gpui source, beside this repo, at the exact pin + our patch
 git clone https://github.com/zed-industries/zed ../zed-upstream
-# (our exact pin + the td-crt-pass warp patch: see terminal-delight/docs)
+cd ../zed-upstream
+git checkout abbe85a3321bf6cb7f5b241e623d9c2e16c29187
+git apply ../markdown-delight/patches/td-crt-pass.patch
+cd ../markdown-delight
 
 cd app
-cargo run -- README.md     # tabs · splits · edit-by-default · full CRT
+cargo run -- ../README.md  # tabs · splits · edit-by-default · full CRT
 cargo build --release
-../scripts/make-default.sh # become the system default .md handler (+icon)
+../scripts/make-default.sh  # become the system default .md handler (+icon)
 ```
+
+See **[`BUILDING.md`](BUILDING.md)** for the full step-by-step, system
+dependencies, and the directory layout the path-deps expect.
 
 Keys: `ctrl+e` source↔preview · `ctrl+s` save · `ctrl+alt+r`/`ctrl+alt+d`
 split right/down · `ctrl+shift+t` new tab · `ctrl+pgup/pgdn` switch tab ·

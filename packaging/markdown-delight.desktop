@@ -3,8 +3,11 @@ Type=Application
 Name=markdown-delight
 GenericName=Markdown Editor
 Comment=Tabful, tiling, themeable Markdown editor
-# %F = the file(s) the file manager hands us on double-click
-Exec=markdown-delight %F
+# %F = the file(s) the file manager hands us on double-click.
+# env: persist NVIDIA's compiled-shader cache so the GPU/Vulkan cold-start (the
+# launch spinner) shrinks after the first run. Ignored on non-NVIDIA GPUs.
+# Single-instance forwarding (see src/ipc.rs) makes every later click snap open.
+Exec=env __GL_SHADER_DISK_CACHE=1 __GL_SHADER_DISK_CACHE_SIZE=1073741824 markdown-delight %F
 Icon=markdown-delight
 Terminal=false
 Categories=Utility;TextEditor;Development;

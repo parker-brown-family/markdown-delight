@@ -1,0 +1,34 @@
+# markdown-delight theme — paper (light reading mode, ink-on-warm-paper, slate shell)
+# Edit this file while the app is running: it hot-reloads. No recompile.
+name = "paper"
+
+[colors]
+bg      = "#f4efe4"
+surface = "#e7dfcd"
+text    = "#2a2620"
+accent  = "#b5651d"
+faint   = "#c9bfa6"
+
+[shell]
+# muted slate housing frames the warm page
+frame_bg     = "#cfc7b4"
+frame_text   = "#3a352c"
+frame_border = "#8a7f66"
+frame_faint  = "#6f6753"
+
+[effects]
+# light/print mode: CRT effects mostly off for clean reading
+scanline_opacity = 0.0
+scanline_step    = 4.0
+vignette         = 0.25
+glow             = 0.0
+bloom            = 0.0
+tracking         = 0.0
+flicker          = 0.0
+curvature        = 0.12
+screen_glare     = 0.0
+jiggle           = 0.0
+
+[font]
+family = "JetBrains Mono"
+size   = 14.0

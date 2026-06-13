@@ -12,9 +12,9 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, Bounds, BoxShadow, Context, Entity, FocusHandle, Focusable, HighlightStyle,
+    AnyElement, Bounds, Context, Entity, FocusHandle, Focusable, HighlightStyle,
     KeyDownEvent, MouseButton, MouseDownEvent, Pixels, ScrollHandle, SharedString, StyledText,
-    Window, canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, white,
+    Window, canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px,
 };
 
 use crate::{crt, editor, render, theme, warp};
@@ -61,16 +61,27 @@ pub struct MdPane {
     pub doc: Entity<Doc>,
     pub mode: Mode,
     pub closed: bool,
+    /// Optional per-pane theme override (name into theme::ThemeRegistry).
+    /// None = follow the global active theme. New/split panes inherit this from
+    /// their origin pane; dragged panes carry it with them.
+    pub theme: Option<String>,
     focus_handle: FocusHandle,
     fx: crt::Fx,
     scroll: ScrollHandle,
     tube_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    doc_sub: gpui::Subscription,
 }
 
 impl MdPane {
-    pub fn new(doc: Entity<Doc>, mode: Mode, seed: u64, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        doc: Entity<Doc>,
+        mode: Mode,
+        seed: u64,
+        theme: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // live preview: repaint when the shared doc changes
-        cx.observe(&doc, |_, _, cx| cx.notify()).detach();
+        let doc_sub = cx.observe(&doc, |_, _, cx| cx.notify());
         // fx clock — only notifies when something visibly moved
         cx.spawn(async move |this, cx| {
             loop {
@@ -82,7 +93,7 @@ impl MdPane {
                         if pane.closed {
                             return false;
                         }
-                        let th = theme::theme(cx);
+                        let th = pane.effective_theme(cx);
                         if pane.fx.tick(&th) {
                             cx.notify();
                         }
@@ -100,11 +111,47 @@ impl MdPane {
             doc,
             mode,
             closed: false,
+            theme,
             focus_handle: cx.focus_handle(),
             fx: crt::Fx::new(seed),
             scroll: ScrollHandle::new(),
             tube_bounds: Arc::new(Mutex::new(None)),
+            doc_sub,
         }
+    }
+
+    /// The theme this pane renders with: its override, else the global active theme.
+    pub fn effective_theme(&self, cx: &gpui::App) -> Arc<theme::Theme> {
+        theme::resolve(cx, self.theme.as_deref())
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.mode == Mode::Source
+    }
+
+    /// The pane's effective theme name (for the header chip).
+    pub fn theme_name(&self, cx: &gpui::App) -> SharedString {
+        self.effective_theme(cx).name.clone().into()
+    }
+
+    /// Header status word: editing / modified / live.
+    pub fn status_str(&self, cx: &gpui::App) -> &'static str {
+        let dirty = self.doc.read(cx).editor.dirty;
+        match (self.is_editing(), dirty) {
+            (true, true) => "editing · ● modified",
+            (true, false) => "editing",
+            (false, true) => "● modified",
+            (false, false) => "live",
+        }
+    }
+
+    /// Point this pane at a different Doc (the finder's "open in THIS tab").
+    /// Re-subscribes the live-preview observer and rewinds the tube.
+    pub fn set_doc(&mut self, doc: Entity<Doc>, cx: &mut Context<Self>) {
+        self.doc_sub = cx.observe(&doc, |_, _, cx| cx.notify());
+        self.doc = doc;
+        self.scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
     }
 
     /// Keep the cursor row inside the visible window after edits — without
@@ -114,15 +161,16 @@ impl MdPane {
             return;
         };
         let h = f32::from(b.size.height);
+        let line_h = LINE_H * theme::font_scale();
         let (line, _) = self.doc.read(cx).editor.line_col();
-        let cursor_y = PAD_Y + line as f32 * LINE_H;
+        let cursor_y = PAD_Y + line as f32 * line_h;
         let mut off = self.scroll.offset();
         let visible_y = cursor_y + f32::from(off.y);
-        if visible_y < LINE_H {
-            off.y = px(-(cursor_y - LINE_H * 2.).max(0.));
+        if visible_y < line_h {
+            off.y = px(-(cursor_y - line_h * 2.).max(0.));
             self.scroll.set_offset(off);
-        } else if visible_y > h - LINE_H * 2. {
-            off.y = px(-(cursor_y - h + LINE_H * 3.));
+        } else if visible_y > h - line_h * 2. {
+            off.y = px(-(cursor_y - h + line_h * 3.));
             self.scroll.set_offset(off);
         }
     }
@@ -133,12 +181,13 @@ impl MdPane {
             return;
         };
         let off = self.scroll.offset();
+        let sc = theme::font_scale();
         let y = f32::from(pos.y) - f32::from(b.origin.y) - PAD_Y - f32::from(off.y);
         let x = f32::from(pos.x) - f32::from(b.origin.x) - PAD_X - f32::from(off.x);
         self.doc.update(cx, |doc, cx| {
             let e = &mut doc.editor;
-            let line = ((y / LINE_H).floor().max(0.) as usize).min(e.line_count() - 1);
-            let col = ((x / CHAR_W).round().max(0.) as usize).min(e.line(line).chars().count());
+            let line = ((y / (LINE_H * sc)).floor().max(0.) as usize).min(e.line_count() - 1);
+            let col = ((x / (CHAR_W * sc)).round().max(0.) as usize).min(e.line(line).chars().count());
             e.set_cursor(line, col);
             cx.notify();
         });
@@ -157,26 +206,14 @@ impl MdPane {
             return;
         }
         if m.control {
-            match ks.key.as_str() {
-                "e" => {
-                    self.mode = match self.mode {
-                        Mode::Preview => Mode::Source,
-                        Mode::Source => Mode::Preview,
-                    };
-                    cx.notify();
-                }
-                "s" => {
-                    self.doc.update(cx, |doc, cx| {
-                        if let Some(path) = doc.path.clone() {
-                            if let Err(e) = doc.editor.save(&path) {
-                                eprintln!("save failed: {e}");
-                            }
-                            doc.reparse();
-                            cx.notify();
-                        }
-                    });
-                }
-                _ => {}
+            // ctrl+e toggles mode here; ctrl+s (save / save-as) is handled at the
+            // Workspace level so it can name a new notebook + rename its tab.
+            if ks.key.as_str() == "e" {
+                self.mode = match self.mode {
+                    Mode::Preview => Mode::Source,
+                    Mode::Source => Mode::Preview,
+                };
+                cx.notify();
             }
             return;
         }
@@ -220,10 +257,11 @@ impl MdPane {
         let doc = self.doc.read(cx);
         let (cur_line, cur_col) = doc.editor.line_col();
         let focused = true; // cursor always drawn; dim later if needed
+        let line_h = px(LINE_H * theme::font_scale());
         (0..doc.editor.line_count())
             .map(|i| {
                 let mut text = doc.editor.line(i);
-                let line = div().h(px(21.)).whitespace_nowrap();
+                let line = div().h(line_h).whitespace_nowrap();
                 if i != cur_line || !focused {
                     return if text.is_empty() {
                         line.into_any_element()
@@ -264,63 +302,19 @@ fn darken(mut c: gpui::Hsla, f: f32) -> gpui::Hsla {
     c.l *= f;
     c
 }
-fn brighten(mut c: gpui::Hsla, f: f32) -> gpui::Hsla {
-    c.l = (c.l * f).min(0.92);
-    c
-}
 
 impl Render for MdPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = theme::theme(cx);
+        let th = self.effective_theme(cx);
+        let sc = theme::font_scale();
         let doc = self.doc.read(cx);
         let editing = self.mode == Mode::Source;
-        let dirty = doc.editor.dirty;
-        let label = doc.label.clone();
-        let block_count = doc.blocks.len();
         let line_count = doc.editor.line_count();
-        let status = match (editing, dirty) {
-            (true, true) => "editing · ● modified",
-            (true, false) => "editing",
-            (false, true) => "● modified",
-            (false, false) => "live",
-        };
         let rail_count = if editing { line_count } else { 99 };
         let jiggle = self.fx.jiggle_px;
 
-        let header = div()
-            .h(px(24.))
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .px_2()
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(brighten(th.frame_bg, 1.9), 0.),
-                linear_color_stop(th.frame_bg, 1.),
-            ))
-            .border_b_1()
-            .border_color(th.frame_border.alpha(0.5))
-            .text_size(px(11.))
-            .text_color(th.frame_text)
-            .shadow(
-                vec![BoxShadow {
-                    color: white().alpha(0.16),
-                    offset: point(px(1.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                }]
-                .into(),
-            )
-            .child(SharedString::from(format!(
-                "▸ {} · {}",
-                if editing { "SRC" } else { "DOC" },
-                label
-            )))
-            .child(SharedString::from(format!("{} · {}", th.name, status)));
-
+        // NOTE: the pane header (drag handle + theme chip) is rendered by
+        // render_node in main.rs, which has the Workspace context the drag needs.
         // rail numbers ride the tube's scroll offset so they stay aligned
         let rail_offset = if editing {
             f32::from(self.scroll.offset().y)
@@ -346,9 +340,9 @@ impl Render for MdPane {
                     .flex_col()
                     .children((1..=rail_count.max(1)).map(|i| {
                         div()
-                            .h(px(21.))
+                            .h(px(21. * sc))
                             .pr_2()
-                            .text_size(px(10.5))
+                            .text_size(px(10.5 * sc))
                             .text_color(th.frame_faint.alpha(0.45))
                             .flex()
                             .justify_end()
@@ -365,7 +359,7 @@ impl Render for MdPane {
                 .track_scroll(&self.scroll)
                 .px_4()
                 .py_3()
-                .text_size(px(13.))
+                .text_size(px(13. * sc))
                 .whitespace_nowrap()
                 .flex()
                 .flex_col()
@@ -402,15 +396,23 @@ impl Render for MdPane {
             .child(
                 div().absolute().inset_0().child(
                     canvas(
-                        move |bounds, window, _| {
-                            *tube_store.lock().unwrap() = Some(bounds);
-                            let sf = window.scale_factor();
-                            warp::register([
-                                f32::from(bounds.origin.x) * sf,
-                                f32::from(bounds.origin.y) * sf,
-                                f32::from(bounds.size.width) * sf,
-                                f32::from(bounds.size.height) * sf,
-                            ]);
+                        // capture the Copy f32, not all of `th` (Arc) — `th` is
+                        // reborrowed below for crt::glass()
+                        {
+                            let glare = th.screen_glare;
+                            move |bounds, window, _| {
+                                *tube_store.lock().unwrap() = Some(bounds);
+                                let sf = window.scale_factor();
+                                warp::register_with_glare(
+                                    [
+                                        f32::from(bounds.origin.x) * sf,
+                                        f32::from(bounds.origin.y) * sf,
+                                        f32::from(bounds.size.width) * sf,
+                                        f32::from(bounds.size.height) * sf,
+                                    ],
+                                    glare,
+                                );
+                            }
                         },
                         |_, _, _, _| {},
                     )
@@ -429,11 +431,10 @@ impl Render for MdPane {
             .flex()
             .flex_col()
             .font_family(th.font_family.clone())
-            .text_size(px(th.font_size))
+            .text_size(px(th.font_size * sc))
             .text_color(th.text)
             .pt(px(jiggle.max(0.)))
             .pb(px((-jiggle).max(0.)))
-            .child(header)
             .child(
                 div()
                     .flex_1()

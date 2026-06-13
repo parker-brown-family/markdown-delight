@@ -1,0 +1,35 @@
+# markdown-delight theme — amber (vintage phosphor amber tube, teal complement shell)
+# Edit this file while the app is running: it hot-reloads. No recompile.
+name = "amber"
+
+[colors]
+bg      = "#140b02"
+surface = "#231504"
+text    = "#ffcf8a"
+accent  = "#ffb300"
+faint   = "#4a2f08"
+
+[shell]
+# teal housing complements the amber tube
+frame_bg     = "#06201f"
+frame_text   = "#aee3df"
+frame_border = "#3fbfb4"
+frame_faint  = "#6fd0c6"
+
+[effects]
+scanline_opacity = 0.20
+scanline_step    = 4.0
+vignette         = 0.78
+glow             = 0.8
+bloom            = 0.85
+tracking         = 0.5
+tracking_period  = 18.0
+tracking_sweep   = 7.0
+flicker          = 0.45
+curvature        = 0.4
+screen_glare     = 0.30
+jiggle           = 0.6
+
+[font]
+family = "JetBrains Mono"
+size   = 14.0

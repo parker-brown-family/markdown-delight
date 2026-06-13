@@ -140,17 +140,50 @@ impl ThemeRegistry {
     pub fn by_name(&self, name: &str) -> Option<Arc<Theme>> {
         self.0.iter().find(|t| t.name == name).cloned()
     }
-    /// The theme that follows `name` in cycle order (wraps). Unknown name → first.
-    pub fn next_after(&self, name: &str) -> Option<Arc<Theme>> {
-        if self.0.is_empty() {
-            return None;
-        }
-        let next = match self.0.iter().position(|t| t.name == name) {
-            Some(i) => (i + 1) % self.0.len(),
-            None => 0,
-        };
-        self.0.get(next).cloned()
+}
+
+/// All registered themes as `(name, glyph)`, in cycle order — drives the theme
+/// tray's icon row. Glyph is a small per-theme emblem (terminal-delight style).
+pub fn registry_list(cx: &App) -> Vec<(String, &'static str)> {
+    cx.global::<ThemeRegistry>()
+        .0
+        .iter()
+        .map(|t| (t.name.clone(), theme_glyph(&t.name)))
+        .collect()
+}
+
+/// A small emblem for a theme name, for the tray's THEME row.
+pub fn theme_glyph(name: &str) -> &'static str {
+    match name {
+        "hacker" => ">_",
+        "amber" => "★",
+        "ice" => "❄",
+        "paper" => "☼",
+        _ => "◆",
     }
+}
+
+/// Parse a `#rrggbb` swatch into an Hsla (for the tray's SEED COLOUR row).
+pub fn parse_hex(s: &str) -> Option<Hsla> {
+    hex(s)
+}
+
+/// Fold a theme's phosphor onto one seed hue: accent / text / faint take the
+/// seed's hue+saturation but KEEP their own lightness (so contrast and
+/// readability survive), while bg/surface stay put. This is what the SEED
+/// COLOUR swatches apply — a whole-tube recolour layered over the base theme.
+pub fn recolor(base: &Theme, seed: Hsla) -> Theme {
+    let fold = |c: Hsla| Hsla {
+        h: seed.h,
+        s: seed.s,
+        l: c.l,
+        a: c.a,
+    };
+    let mut t = base.clone();
+    t.accent = fold(t.accent);
+    t.text = fold(t.text);
+    t.faint = fold(t.faint);
+    t
 }
 
 /// Look up a theme by name from the global registry (None → global active theme).
@@ -162,16 +195,6 @@ pub fn resolve(cx: &App, name: Option<&str>) -> Arc<Theme> {
             .unwrap_or_else(|| theme(cx)),
         None => theme(cx),
     }
-}
-
-/// The theme name to cycle to after `current` (None = global), for the per-pane
-/// theme chip. Always returns Some when the registry is non-empty.
-pub fn cycle_name(cx: &App, current: Option<&str>) -> Option<String> {
-    let reg = cx.global::<ThemeRegistry>();
-    let base = current
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| theme(cx).name.clone());
-    reg.next_after(&base).map(|t| t.name.clone())
 }
 
 fn themes_dir() -> Option<PathBuf> {
@@ -213,6 +236,12 @@ fn build_registry() -> Vec<Arc<Theme>> {
 fn apply_warp(theme: &Theme) {
     #[cfg(target_os = "linux")]
     gpui_wgpu::set_crt_warp(theme.curvature * 0.14, theme.curvature * 0.06);
+}
+
+/// Push the CURRENT active theme's curvature dial into the renderer (the global
+/// gate for the per-tube warp). Call after swapping the outer theme at runtime.
+pub fn apply_warp_theme(cx: &App) {
+    apply_warp(&theme(cx));
 }
 
 fn hex(value: &str) -> Option<Hsla> {
@@ -318,4 +347,35 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_hex_known() {
+        // #22c55e is the hacker accent — round-trips to a green hue.
+        let c = parse_hex("#22c55e").expect("valid hex");
+        assert!((0.25..0.45).contains(&c.h), "green hue, got {}", c.h);
+        assert!(parse_hex("nope").is_none());
+        assert!(parse_hex("#12345").is_none()); // wrong length
+    }
+
+    #[test]
+    fn recolor_folds_hue_keeps_lightness() {
+        let base = parse("name='t'\n[colors]\nbg='#000000'\nsurface='#111111'\ntext='#86efac'\naccent='#22c55e'\nfaint='#14401f'\n").expect("parses");
+        let seed = parse_hex("#2f6fdd").expect("blue"); // ~0.6 hue
+        let out = recolor(&base, seed);
+        // accent/text/faint take the seed hue+sat...
+        assert!((out.accent.h - seed.h).abs() < 1e-4);
+        assert!((out.text.h - seed.h).abs() < 1e-4);
+        assert!((out.faint.h - seed.h).abs() < 1e-4);
+        // ...but KEEP their own lightness (readability preserved)
+        assert!((out.text.l - base.text.l).abs() < 1e-6);
+        assert!((out.accent.l - base.accent.l).abs() < 1e-6);
+        // bg/surface are untouched
+        assert_eq!(out.bg, base.bg);
+        assert_eq!(out.surface, base.surface);
+    }
 }

@@ -16,7 +16,8 @@ open-source work:
 The CRT chrome (`crt.rs`, `warp.rs`, workspace layout) is ported from
 [terminal-delight](https://github.com/parker-brown-family/terminal-delight)
 (MIT, same author). The barrel-warp render pass is a small Apache-2.0-
-compatible patch carried on the pinned gpui checkout (`td-crt-pass`).
+compatible patch (`td-crt-pass`, in `patches/td-crt-pass.patch`) applied to the
+pinned gpui checkout — it touches only `crates/gpui_wgpu`. See `BUILDING.md`.
 
 **Clean-room boundary:** Zed's `editor`, `markdown`, `rope`, `text`, and
 `language` crates are GPL-3.0-or-later and are NOT used, linked, or copied.

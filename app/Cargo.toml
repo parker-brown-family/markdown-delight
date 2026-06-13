@@ -5,10 +5,13 @@ edition = "2021"
 license = "MIT"
 description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app polished, themeable, settable as the default .md handler"
 
-# gpui consumed from the pinned zed-upstream checkout — the SAME pin terminal-delight
-# proved on this box (X11 · NVIDIA · wgpu renderer). Apache-2.0; MIT-compatible.
+# gpui consumed from a pinned zed-upstream checkout (X11 · NVIDIA · wgpu renderer).
+# Apache-2.0; MIT-compatible. Pin: zed-industries/zed @
+#   abbe85a3321bf6cb7f5b241e623d9c2e16c29187
+# + our barrel-warp render patch ../patches/td-crt-pass.patch (gpui_wgpu only).
+# Full reproducible-build steps: ../BUILDING.md.
 # Zed's editor/markdown/rope/text/language crates are GPL-3.0 → STUDY ONLY, never a dep.
-# (docs/PLAN.md §2). Switch to git+rev form when we publish.
+# (docs/PLAN.md §2).
 [dependencies]
 comrak = "0.52.0"
 gpui = { path = "../../zed-upstream/crates/gpui" }
@@ -21,7 +24,8 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# terminal-delight's td-crt-pass patch (barrel warp + crt rects) lives here
+# td-crt-pass patch (barrel warp + per-pane crt rects) is applied to this crate
+# in the pinned checkout — see ../patches/td-crt-pass.patch and ../BUILDING.md.
 gpui_wgpu = { path = "../../zed-upstream/crates/gpui_wgpu" }
 
 # The editor core's own MIT/permissive deps land at G0b, not before:

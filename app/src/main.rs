@@ -14,6 +14,7 @@
 mod crt;
 mod editor;
 mod finder;
+mod ipc;
 mod pane;
 mod render;
 mod session;
@@ -2724,16 +2725,23 @@ impl Render for Workspace {
     }
 }
 
+/// Read one file into `(label, path, text)`, degrading gracefully to an
+/// error buffer if it can't be read. Shared by initial load and forwarded opens.
+fn read_file(path: &PathBuf) -> (String, Option<PathBuf>, String) {
+    let disp = path.to_string_lossy().to_string();
+    match fs::read_to_string(path) {
+        Ok(text) => (disp, Some(path.clone()), text),
+        Err(e) => (
+            format!("{disp} (error)"),
+            None,
+            format!("could not read {disp}:\n{e}"),
+        ),
+    }
+}
+
 fn load() -> (String, Option<PathBuf>, String) {
     match env::args().nth(1) {
-        Some(path) => match fs::read_to_string(&path) {
-            Ok(text) => (path.clone(), Some(PathBuf::from(path)), text),
-            Err(e) => (
-                format!("{path} (error)"),
-                None,
-                format!("could not read {path}:\n{e}"),
-            ),
-        },
+        Some(path) => read_file(&PathBuf::from(path)),
         None => ("sample.md".to_string(), None, SAMPLE.to_string()),
     }
 }
@@ -2746,35 +2754,91 @@ fn stamp(t0: Instant, what: &str) {
     }
 }
 
+/// Open one editor window for `(label, path, text)`. Shared by the first launch
+/// and by every forwarded open from a sibling process (see `ipc`).
+fn open_doc_window(label: String, path: Option<PathBuf>, text: String, cx: &mut App) {
+    let bounds = gpui::Bounds::centered(None, size(px(1180.), px(800.)), cx);
+    let title: SharedString = format!("{label} — markdown-delight").into();
+    let doc = cx.new(|_| Doc::new(label, path, text));
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some(title),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        move |window, cx| {
+            // match the .desktop StartupWMClass so the dock shows OUR icon
+            window.set_app_id("markdown-delight");
+            cx.new(|cx| Workspace::new(doc.clone(), window, cx))
+        },
+    )
+    .expect("open window");
+}
+
+/// Handle a launch request forwarded from a sibling process: open the file(s)
+/// it carried (or, for a bare click with none, just raise the existing window),
+/// then pull our window to the front so the click feels instant.
+fn handle_forwarded(req: ipc::OpenRequest, cx: &mut App) {
+    for path in req {
+        let (label, p, text) = read_file(&path);
+        open_doc_window(label, p, text, cx);
+    }
+    // A bare request with no windows yet (rare: every window was closed but the
+    // process lingered) still deserves a fresh blank one.
+    if cx.windows().is_empty() {
+        let (label, path, text) = ("sample.md".to_string(), None, SAMPLE.to_string());
+        open_doc_window(label, path, text, cx);
+    }
+    cx.activate(true);
+}
+
 fn main() {
     let t0 = Instant::now();
     let _ = START.set(t0);
+
+    // Single-instance: if a primary is already up, hand it our file and bail
+    // BEFORE touching the GPU — that is what makes a second click snap open.
+    let forward: Vec<PathBuf> = env::args().skip(1).map(PathBuf::from).collect();
+    if ipc::try_forward(&forward) {
+        return;
+    }
+    // We are the primary. Listen for siblings' forwarded opens.
+    let server = ipc::start_server();
+
     let (label, path, text) = load();
     stamp(t0, "file loaded");
     application().run(move |cx: &mut App| {
         stamp(t0, "app callback (gpu/window subsystem up)");
         theme::init(cx);
-        let bounds = gpui::Bounds::centered(None, size(px(1180.), px(800.)), cx);
-        let title: SharedString = format!("{label} — markdown-delight").into();
-        let doc = cx.new(|_| Doc::new(label.clone(), path.clone(), text.clone()));
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(title),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            move |window, cx| {
-                // match the .desktop StartupWMClass so the dock shows OUR icon
-                window.set_app_id("markdown-delight");
-                cx.new(|cx| Workspace::new(doc.clone(), window, cx))
-            },
-        )
-        .expect("open window");
+        open_doc_window(label, path, text, cx);
         stamp(t0, "window opened (pre first frame)");
         cx.activate(true);
+
+        // Drain forwarded launch requests on the main loop. A cheap timer poll
+        // (mpsc has no async recv) — invisible at 80ms, no extra dependency.
+        if let Some(rx) = server {
+            cx.spawn(async move |cx| loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(80))
+                    .await;
+                let mut reqs: Vec<ipc::OpenRequest> = Vec::new();
+                while let Ok(req) = rx.try_recv() {
+                    reqs.push(req);
+                }
+                if reqs.is_empty() {
+                    continue;
+                }
+                cx.update(|cx| {
+                    for req in reqs {
+                        handle_forwarded(req, cx);
+                    }
+                });
+            })
+            .detach();
+        }
     });
 }
 

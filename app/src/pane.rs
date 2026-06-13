@@ -65,6 +65,9 @@ pub struct MdPane {
     /// None = follow the global active theme. New/split panes inherit this from
     /// their origin pane; dragged panes carry it with them.
     pub theme: Option<String>,
+    /// Optional per-pane SEED colour — folds this pane's tube onto one hue,
+    /// layered on top of `theme`. None = the (effective) theme's own colours.
+    pub seed: Option<gpui::Hsla>,
     focus_handle: FocusHandle,
     fx: crt::Fx,
     scroll: ScrollHandle,
@@ -112,6 +115,7 @@ impl MdPane {
             mode,
             closed: false,
             theme,
+            seed: None,
             focus_handle: cx.focus_handle(),
             fx: crt::Fx::new(seed),
             scroll: ScrollHandle::new(),
@@ -120,9 +124,14 @@ impl MdPane {
         }
     }
 
-    /// The theme this pane renders with: its override, else the global active theme.
+    /// The theme this pane renders with: its override (else the global active
+    /// theme), with its optional seed hue folded on top.
     pub fn effective_theme(&self, cx: &gpui::App) -> Arc<theme::Theme> {
-        theme::resolve(cx, self.theme.as_deref())
+        let base = theme::resolve(cx, self.theme.as_deref());
+        match self.seed {
+            Some(seed) => Arc::new(theme::recolor(&base, seed)),
+            None => base,
+        }
     }
 
     pub fn is_editing(&self) -> bool {
@@ -182,8 +191,26 @@ impl MdPane {
         };
         let off = self.scroll.offset();
         let sc = theme::font_scale();
-        let y = f32::from(pos.y) - f32::from(b.origin.y) - PAD_Y - f32::from(off.y);
-        let x = f32::from(pos.x) - f32::from(b.origin.x) - PAD_X - f32::from(off.x);
+        // Follow the glass: a screen point inside a bent tube DISPLAYS content
+        // sampled from warped(point), so a click must be pushed through the same
+        // barrel curve the shader uses or the cursor lands off-target near the
+        // edges. (k matches the per-tube dial in render / theme::apply_warp.)
+        let mut sx = f32::from(pos.x) - f32::from(b.origin.x);
+        let mut sy = f32::from(pos.y) - f32::from(b.origin.y);
+        let th = self.effective_theme(cx);
+        let (k1, k2) = (th.curvature * 0.14, th.curvature * 0.06);
+        if k1.abs() > 0.0005 || k2.abs() > 0.0005 {
+            let bw = f32::from(b.size.width).max(1.);
+            let bh = f32::from(b.size.height).max(1.);
+            let cu = sx / bw - 0.5;
+            let cv = sy / bh - 0.5;
+            let r2 = cu * cu + cv * cv;
+            let f = 1.0 + k1 * r2 + k2 * r2 * r2;
+            sx = (0.5 + cu * f) * bw;
+            sy = (0.5 + cv * f) * bh;
+        }
+        let y = sy - PAD_Y - f32::from(off.y);
+        let x = sx - PAD_X - f32::from(off.x);
         self.doc.update(cx, |doc, cx| {
             let e = &mut doc.editor;
             let line = ((y / (LINE_H * sc)).floor().max(0.) as usize).min(e.line_count() - 1);
@@ -400,10 +427,14 @@ impl Render for MdPane {
                         // reborrowed below for crt::glass()
                         {
                             let glare = th.screen_glare;
+                            // per-tube barrel curvature: this pane bends on its
+                            // OWN theme (see warp.rs). Same dial as theme::apply_warp.
+                            let k1 = th.curvature * 0.14;
+                            let k2 = th.curvature * 0.06;
                             move |bounds, window, _| {
                                 *tube_store.lock().unwrap() = Some(bounds);
                                 let sf = window.scale_factor();
-                                warp::register_with_glare(
+                                warp::register_tube(
                                     [
                                         f32::from(bounds.origin.x) * sf,
                                         f32::from(bounds.origin.y) * sf,
@@ -411,6 +442,8 @@ impl Render for MdPane {
                                         f32::from(bounds.size.height) * sf,
                                     ],
                                     glare,
+                                    k1,
+                                    k2,
                                 );
                             }
                         },

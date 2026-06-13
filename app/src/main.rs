@@ -220,6 +220,21 @@ enum CloseRequest {
     Pane(EntityId),
 }
 
+/// Which scope the open theme tray is editing — the whole window (the global
+/// "outer" theme) or one pane's override. Ported from terminal-delight's
+/// outer/per-pane theme selector.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuScope {
+    Outer,
+    Pane(EntityId),
+}
+
+/// Seed-colour presets for the theme tray — fold the whole tube onto this hue.
+/// (None = the theme's own colours.) Mirrors terminal-delight's SEED COLOUR row.
+const SEED_SWATCHES: &[&str] = &[
+    "#2f6fdd", "#31d7ff", "#22c55e", "#ff8a3d", "#f5d442", "#872d73", "#d6336c", "#828282",
+];
+
 /// The payload carried while a pane is being dragged. `source` is the Workspace
 /// (window) it came from — entities are app-global, so a drop in ANY window can
 /// reach back and detach it from its origin. The pane keeps its own Doc.
@@ -453,6 +468,13 @@ struct Workspace {
     drop_target: Option<(EntityId, DropZone)>,
     /// A close awaiting "save / discard / cancel" because of unsaved edits.
     confirm_close: Option<CloseRequest>,
+    /// The open theme tray, if any, and the window-space point to anchor it at
+    /// (a pane chip click). None anchor = the fixed top-right outer-button slot.
+    theme_menu: Option<MenuScope>,
+    menu_at: Option<gpui::Point<Pixels>>,
+    /// The current outer (window-wide) theme choice: (theme name, optional seed
+    /// hue). Applied to the global ActiveTheme; panes with no override follow it.
+    outer: (String, Option<Hsla>),
     /// Live text-zoom scrubber: true while the knob is held; `font_track` holds
     /// the slider's painted bounds so a drag maps cursor-x → scale.
     font_drag: bool,
@@ -476,6 +498,9 @@ impl Workspace {
             split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             drop_target: None,
             confirm_close: None,
+            theme_menu: None,
+            menu_at: None,
+            outer: (theme::theme(cx).name.clone(), None),
             font_drag: false,
             font_track: Arc::new(Mutex::new(None)),
             pane_seed: 0xD0C5,
@@ -515,6 +540,9 @@ impl Workspace {
             split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             drop_target: None,
             confirm_close: None,
+            theme_menu: None,
+            menu_at: None,
+            outer: (theme::theme(cx).name.clone(), None),
             font_drag: false,
             font_track: Arc::new(Mutex::new(None)),
             pane_seed: 0xD0C5,
@@ -631,9 +659,14 @@ impl Workspace {
             Mode::Source => Mode::Preview,
             Mode::Preview => Mode::Source,
         };
-        // the split inherits the focused pane's theme override
+        // the split inherits the focused pane's theme override (name + seed)
         let inherit_theme = focused_read.theme.clone();
+        let inherit_seed = focused_read.seed;
         let new_pane = self.make_pane(new_mode, inherit_theme, cx);
+        new_pane.update(cx, |p, cx| {
+            p.seed = inherit_seed;
+            cx.notify();
+        });
         self.tabs[self.active].root.split_leaf(target, dir, new_pane);
         cx.notify();
     }
@@ -851,21 +884,107 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Cycle (or reset) a pane's theme override — the header theme chip.
-    fn cycle_pane_theme(&mut self, pane_id: EntityId, reset: bool, cx: &mut Context<Self>) {
-        let Some(pane) = self.find_pane(pane_id) else {
-            return;
-        };
-        let new = if reset {
-            None
-        } else {
-            let cur = pane.read(cx).theme.clone();
-            theme::cycle_name(cx, cur.as_deref())
-        };
-        pane.update(cx, |p, cx| {
-            p.theme = new;
+    /* ---------------- theme tray (outer + per-pane selector) ---------------- */
+
+    /// Open the theme tray for a scope, anchored at `at` (None = outer slot).
+    fn open_theme_menu(
+        &mut self,
+        scope: MenuScope,
+        at: Option<gpui::Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.theme_menu = Some(scope);
+        self.menu_at = at;
+        cx.notify();
+    }
+
+    fn close_theme_menu(&mut self, cx: &mut Context<Self>) {
+        if self.theme_menu.take().is_some() {
+            self.menu_at = None;
             cx.notify();
-        });
+        }
+    }
+
+    /// The (theme name, seed) currently in effect for the open tray's scope.
+    fn menu_choice(&self, cx: &App) -> (String, Option<Hsla>) {
+        match self.theme_menu {
+            Some(MenuScope::Pane(id)) => match self.find_pane(id) {
+                Some(p) => {
+                    let p = p.read(cx);
+                    let name = p
+                        .theme
+                        .clone()
+                        .unwrap_or_else(|| self.outer.0.clone());
+                    (name, p.seed)
+                }
+                None => self.outer.clone(),
+            },
+            _ => self.outer.clone(),
+        }
+    }
+
+    /// Re-derive the global ActiveTheme from the current outer choice (theme +
+    /// seed). Panes with no override follow it; the bezel/chrome adopt it too.
+    fn rebuild_outer(&self, cx: &mut Context<Self>) {
+        let (name, seed) = &self.outer;
+        let base = theme::resolve(cx, Some(name));
+        let t = match seed {
+            Some(s) => theme::recolor(&base, *s),
+            None => (*base).clone(),
+        };
+        cx.set_global(theme::ActiveTheme(Arc::new(t)));
+        theme::apply_warp_theme(cx);
+    }
+
+    /// Pick a theme in the open tray (keeps the current seed).
+    fn set_menu_theme(&mut self, name: String, cx: &mut Context<Self>) {
+        match self.theme_menu {
+            Some(MenuScope::Pane(id)) => {
+                if let Some(pane) = self.find_pane(id) {
+                    pane.update(cx, |p, cx| {
+                        p.theme = Some(name);
+                        cx.notify();
+                    });
+                }
+            }
+            _ => {
+                self.outer.0 = name;
+                self.rebuild_outer(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Pick a seed hue in the open tray (keeps the current theme).
+    fn set_menu_seed(&mut self, seed: Option<Hsla>, cx: &mut Context<Self>) {
+        match self.theme_menu {
+            Some(MenuScope::Pane(id)) => {
+                if let Some(pane) = self.find_pane(id) {
+                    pane.update(cx, |p, cx| {
+                        p.seed = seed;
+                        cx.notify();
+                    });
+                }
+            }
+            _ => {
+                self.outer.1 = seed;
+                self.rebuild_outer(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// "Follow outer" — clear a pane's override entirely (theme + seed).
+    fn clear_pane_override(&mut self, cx: &mut Context<Self>) {
+        if let Some(MenuScope::Pane(id)) = self.theme_menu {
+            if let Some(pane) = self.find_pane(id) {
+                pane.update(cx, |p, cx| {
+                    p.theme = None;
+                    p.seed = None;
+                    cx.notify();
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -2008,6 +2127,184 @@ fn confirm_overlay(
         )
 }
 
+/// One THEME-row button: a glyph over the theme name, accent-lit when active.
+fn theme_icon_btn(th: &theme::Theme, glyph: &str, caption: &str, active: bool) -> gpui::Div {
+    let inner = div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_0()
+        .child(div().text_size(px(15.)).child(glyph.to_string()))
+        .child(div().text_size(px(8.)).child(caption.to_string()));
+    let b = div()
+        .w(px(54.))
+        .h(px(40.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .cursor_pointer();
+    if active {
+        b.bg(linear_gradient(
+            135.,
+            linear_color_stop(th.accent.alpha(0.45), 0.),
+            linear_color_stop(th.accent.alpha(0.15), 1.),
+        ))
+        .border_color(th.accent)
+        .text_color(white().alpha(0.95))
+        .child(inner)
+    } else {
+        b.bg(darken(th.frame_bg, 0.8))
+            .border_color(th.accent.alpha(0.35))
+            .text_color(th.frame_text)
+            .child(inner)
+    }
+}
+
+/// One SEED-COLOUR swatch. `None` = the theme's own colours (rainbow chip).
+fn seed_swatch(color: Option<Hsla>, active: bool) -> gpui::Div {
+    let b = div().w(px(20.)).h(px(20.)).rounded_full().cursor_pointer().border_2();
+    let b = match color {
+        Some(c) => b.bg(c),
+        None => b.bg(linear_gradient(
+            135.,
+            linear_color_stop(hsla(0.0, 0.9, 0.6, 1.0), 0.),
+            linear_color_stop(hsla(0.75, 0.9, 0.6, 1.0), 1.),
+        )),
+    };
+    if active {
+        b.border_color(white().alpha(0.92))
+    } else {
+        b.border_color(hsla(0., 0., 0., 0.45))
+    }
+}
+
+/// The theme tray popover (ported from terminal-delight): a THEME row of icon
+/// buttons + a SEED COLOUR row of swatches, anchored at the click. A full-screen
+/// scrim closes it. `is_pane` adds a "follow outer" reset.
+#[allow(clippy::too_many_arguments)]
+fn theme_menu_overlay(
+    is_pane: bool,
+    cur: (String, Option<Hsla>),
+    at: Option<gpui::Point<Pixels>>,
+    th: &theme::Theme,
+    themes: &[(String, &'static str)],
+    has_override: bool,
+    window: &Window,
+    cx: &mut Context<Workspace>,
+) -> gpui::Div {
+    let (cur_name, cur_seed) = cur;
+
+    // ---- THEME row ----
+    let mut theme_row = div().flex().flex_row().gap_2();
+    for (name, glyph) in themes {
+        let active = *name == cur_name;
+        let pick = name.clone();
+        theme_row = theme_row.child(theme_icon_btn(th, glyph, name, active).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.set_menu_theme(pick.clone(), cx);
+            }),
+        ));
+    }
+
+    // ---- SEED COLOUR row: theme default (None) + presets ----
+    let mut seed_row = div().flex().flex_row().items_center().gap_2();
+    seed_row = seed_row.child(seed_swatch(None, cur_seed.is_none()).on_mouse_down(
+        MouseButton::Left,
+        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+            cx.stop_propagation();
+            ws.set_menu_seed(None, cx);
+        }),
+    ));
+    for &hex in SEED_SWATCHES {
+        let color = theme::parse_hex(hex);
+        let active = cur_seed.is_some() && color.map(|c| c.h) == cur_seed.map(|c| c.h);
+        seed_row = seed_row.child(seed_swatch(color, active).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.set_menu_seed(color, cx);
+            }),
+        ));
+    }
+
+    let label = |s: &str| {
+        div()
+            .text_size(px(9.))
+            .text_color(th.text.alpha(0.55))
+            .child(s.to_string())
+    };
+
+    const PANEL_W: f32 = 286.;
+    const PANEL_H_EST: f32 = 188.;
+    let mut panel = div().absolute().w(px(PANEL_W));
+    panel = match at {
+        Some(p) => {
+            let vp = window.viewport_size();
+            let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+            let right = (vw - f32::from(p.x)).clamp(8., (vw - PANEL_W - 8.).max(8.));
+            let top = (f32::from(p.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
+            panel.right(px(right)).top(px(top))
+        }
+        None => panel.top(px(38.)).right(px(14.)),
+    };
+
+    panel = panel
+        .p_3()
+        .rounded_md()
+        .border_1()
+        .border_color(th.accent.alpha(0.55))
+        .bg(darken(th.frame_bg, 0.6))
+        .shadow(
+            vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.6),
+                offset: point(px(4.), px(6.)),
+                blur_radius: px(18.),
+                spread_radius: px(0.),
+                inset: false,
+            }]
+            .into(),
+        )
+        .flex()
+        .flex_col()
+        .gap_2()
+        .text_size(px(10.))
+        .text_color(th.text)
+        // clicks inside the tray must not fall through to the closing scrim
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+        )
+        .child(label(if is_pane { "THEME — THIS PANE" } else { "THEME — OUTER" }))
+        .child(theme_row)
+        .child(label("SEED COLOUR"))
+        .child(seed_row);
+
+    if is_pane {
+        panel = panel.child(
+            Workspace::bezel_btn(th, "follow outer", !has_override).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.clear_pane_override(cx);
+                }),
+            ),
+        );
+    }
+
+    div()
+        .absolute()
+        .inset_0()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_theme_menu(cx)),
+        )
+        .child(panel)
+}
+
 fn render_node(
     node: &Node,
     th: &theme::Theme,
@@ -2086,7 +2383,8 @@ fn render_node(
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        // theme chip — left-click cycles, right-click resets to global
+                        // theme chip — click opens the per-pane theme tray at the
+                        // cursor; right-click is a quick "follow outer" reset.
                         .child(
                             div()
                                 .cursor_pointer()
@@ -2095,16 +2393,22 @@ fn render_node(
                                 .child(SharedString::from(format!("◧ {theme_name}")))
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.cycle_pane_theme(pane_id, false, cx);
+                                        ws.open_theme_menu(
+                                            MenuScope::Pane(pane_id),
+                                            Some(ev.position),
+                                            cx,
+                                        );
                                     }),
                                 )
                                 .on_mouse_down(
                                     MouseButton::Right,
                                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        ws.cycle_pane_theme(pane_id, true, cx);
+                                        ws.theme_menu = Some(MenuScope::Pane(pane_id));
+                                        ws.clear_pane_override(cx);
+                                        ws.theme_menu = None;
                                     }),
                                 ),
                         )
@@ -2314,6 +2618,9 @@ impl Render for Workspace {
         }
         self.reap(window, cx);
         warp::begin_frame(); // visible panes re-register their tube rects below
+        // flatten the glass while an overlay is up so its hit-testing is honest
+        // (the warp is a post-process; a panel over a bent tube would bow with it)
+        warp::set_suppressed(self.theme_menu.is_some() || self.confirm_close.is_some());
         let th = theme::theme(cx);
         let bezel = darken(th.frame_bg, 0.85);
         let tab = &self.tabs[self.active];
@@ -2576,6 +2883,17 @@ impl Render for Workspace {
                     .items_center()
                     .gap_2()
                     .child(font_scrubber)
+                    // outer (window-wide) theme tray
+                    .child(
+                        Self::bezel_btn(&th, "◧ theme", self.theme_menu == Some(MenuScope::Outer))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.open_theme_menu(MenuScope::Outer, None, cx);
+                                }),
+                            ),
+                    )
                     .child(Self::split_btn(&th, SplitDir::Row).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, window, cx| {
@@ -2662,6 +2980,32 @@ impl Render for Workspace {
             (req, cth, names)
         });
 
+        // the theme tray (outer or per-pane), themed to its scope
+        let theme_tray = self.theme_menu.map(|scope| {
+            let is_pane = matches!(scope, MenuScope::Pane(_));
+            let tray_th = match scope {
+                MenuScope::Pane(id) => self
+                    .find_pane(id)
+                    .map(|p| (*p.read(cx).effective_theme(cx)).clone())
+                    .unwrap_or_else(|| (*th).clone()),
+                MenuScope::Outer => (*th).clone(),
+            };
+            let has_override = match scope {
+                MenuScope::Pane(id) => self
+                    .find_pane(id)
+                    .map(|p| {
+                        let p = p.read(cx);
+                        p.theme.is_some() || p.seed.is_some()
+                    })
+                    .unwrap_or(false),
+                MenuScope::Outer => false,
+            };
+            let cur = self.menu_choice(cx);
+            let themes = theme::registry_list(cx);
+            let at = self.menu_at;
+            theme_menu_overlay(is_pane, cur, at, &tray_th, &themes, has_override, window, cx)
+        });
+
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key))
@@ -2722,6 +3066,7 @@ impl Render for Workspace {
             .children(
                 confirm.map(|(req, cth, names)| confirm_overlay(req, &cth, &names, cx)),
             )
+            .children(theme_tray)
     }
 }
 

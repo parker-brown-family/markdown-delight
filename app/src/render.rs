@@ -52,6 +52,50 @@ pub fn parse(text: &str) -> Vec<Block> {
     root.children().filter_map(to_block).collect()
 }
 
+/// Parse, and alongside the render tree emit per-block anchor metadata
+/// (fingerprint + plain text) so comment threads can attach and survive edits.
+/// `src` is reserved for future source-range bridging (kept 0..0 for now).
+pub fn parse_with_meta(text: &str) -> (Vec<Block>, Vec<crate::comments::BlockMeta>) {
+    let blocks = parse(text);
+    let meta = blocks
+        .iter()
+        .map(|b| {
+            let plain = block_plain(b);
+            crate::comments::BlockMeta { fp: crate::comments::fingerprint(&plain), plain, src: 0..0 }
+        })
+        .collect();
+    (blocks, meta)
+}
+
+/// Flatten a block to its plain text — the basis for a comment's fingerprint and
+/// the magnifier quote. Matches what the reader sees, not the raw markdown.
+pub fn block_plain(block: &Block) -> String {
+    match block {
+        Block::Heading { inline, .. } => inline.text.to_string(),
+        Block::Paragraph(inline) => inline.text.to_string(),
+        Block::Code(lines) | Block::Html(lines) => {
+            lines.iter().map(|l| l.as_ref()).collect::<Vec<_>>().join("\n")
+        }
+        Block::Quote(blocks) => blocks.iter().map(block_plain).collect::<Vec<_>>().join(" "),
+        Block::Rule => "—".to_string(),
+        Block::List(items) => items
+            .iter()
+            .map(|(marker, blocks)| {
+                let body = blocks.iter().map(block_plain).collect::<Vec<_>>().join(" ");
+                format!("{marker} {body}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Block::Table(rows) => rows
+            .iter()
+            .map(|(_, cells)| {
+                cells.iter().map(|c| c.text.to_string()).collect::<Vec<_>>().join(" | ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
 /* ---------------- inline spans ---------------- */
 
 #[derive(Clone, Copy, Default)]
@@ -216,6 +260,23 @@ pub fn document(blocks: &[Block]) -> AnyElement {
         .text_color(rgb(TEXT))
         .children(blocks.iter().map(|b| element(b)))
         .into_any_element()
+}
+
+/// Render a single block — used by comment mode to wrap each block in its own
+/// clickable, commentable container.
+pub fn block_element(block: &Block) -> AnyElement {
+    element(block)
+}
+
+/// For a paragraph, its text + inline style runs — so comment mode can rebuild
+/// the `StyledText` itself (capturing its layout for drag-selection and merging
+/// in comment-span highlights). `None` for non-paragraph blocks, which stay
+/// whole-block-commentable via `block_element`.
+pub fn paragraph_text(block: &Block) -> Option<(SharedString, Vec<(Range<usize>, HighlightStyle)>)> {
+    match block {
+        Block::Paragraph(inline) => Some((inline.text.clone(), inline.runs.clone())),
+        _ => None,
+    }
 }
 
 fn styled(inline: &Inline) -> AnyElement {

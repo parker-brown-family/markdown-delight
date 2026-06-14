@@ -3579,6 +3579,7 @@ dependencies = [
  "nucleo-matcher",
  "ropey",
  "serde",
+ "serde_json",
  "toml 0.8.23",
 ]
 

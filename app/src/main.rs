@@ -11,6 +11,8 @@
 //! close pane · ctrl+e: source ↔ preview · ctrl+s: save · bezel A–A scrubber:
 //! live text zoom. Opens in SOURCE mode: right-click → open → type.
 
+mod comment_ui;
+mod comments;
 mod crt;
 mod editor;
 mod finder;
@@ -657,7 +659,8 @@ impl Workspace {
         let focused_read = focused.read(cx);
         let new_mode = match focused_read.mode {
             Mode::Source => Mode::Preview,
-            Mode::Preview => Mode::Source,
+            // splitting a preview/review pane gives a source companion to edit in
+            Mode::Preview | Mode::Comment => Mode::Source,
         };
         // the split inherits the focused pane's theme override (name + seed)
         let inherit_theme = focused_read.theme.clone();
@@ -2322,11 +2325,14 @@ fn render_node(
             // each pane renders in its own (optional) theme; chrome follows it
             let pth = e.read(cx).effective_theme(cx);
             let editing = e.read(cx).is_editing();
+            let commenting = e.read(cx).is_commenting();
             let title = e.read(cx).title(cx);
             let theme_name = e.read(cx).theme_name(cx);
             let status = e.read(cx).status_str(cx);
 
             // ---- header: drag handle + theme chip + pop-out ----
+            let e_cmt = e.clone();
+            let e_browser = e.clone();
             let ghost_label = title.clone();
             let ghost_accent = pth.accent;
             let ghost_frame = pth.frame_bg;
@@ -2383,6 +2389,41 @@ fn render_node(
                         .flex_row()
                         .items_center()
                         .gap_2()
+                        // comment-mode toggle — turns THIS pane into the read-only
+                        // review surface (click a block to comment).
+                        .child(
+                            div()
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .text_color(if commenting { pth.accent } else { pth.frame_faint })
+                                .hover(|s| s.text_color(pth.accent))
+                                .child("▣ comment")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        e_cmt.update(cx, |pane, cx| pane.toggle_comment_mode(cx));
+                                    }),
+                                ),
+                        )
+                        // all-comments browser (also forces review mode on)
+                        .child(
+                            div()
+                                .cursor_pointer()
+                                .px_1()
+                                .rounded_sm()
+                                .text_color(pth.frame_faint)
+                                .hover(|s| s.text_color(pth.accent))
+                                .child("≡ comments")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        e_browser.update(cx, |pane, cx| pane.toggle_comment_browser(cx));
+                                    }),
+                                ),
+                        )
                         // theme chip — click opens the per-pane theme tray at the
                         // cursor; right-click is a quick "follow outer" reset.
                         .child(

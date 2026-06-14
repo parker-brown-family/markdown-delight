@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en" data-theme="hacker">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>markdown-delight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&family=VT323&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="src/styles/theme.css" />
+  <link rel="stylesheet" href="src/styles/workspace.css" />
+</head>
+<body>
+  <div class="workspace">
+    <div class="topbar">
+      <div class="brand">▸ markdown-delight<span class="blink">_</span></div>
+      <div class="tabstrip" id="tabstrip"></div>
+
+      <!-- theme menu — spec-faithful port of the IMT navbar (same data-* contract) -->
+      <div class="theme-menu" data-theme-menu>
+        <button type="button" class="theme-menu-trigger" data-theme-menu-trigger
+                aria-label="Theme and seed colour" aria-haspopup="true" aria-expanded="false"
+                title="Theme and seed colour">
+          <span class="theme-menu-trigger-icon" data-active-theme-icon aria-hidden="true"></span>
+          <span class="theme-menu-trigger-swatch" data-active-theme-swatch aria-hidden="true"></span>
+        </button>
+        <div class="theme-menu-panel" data-theme-menu-panel hidden>
+          <div class="theme-menu-section">
+            <div class="theme-menu-label">Theme</div>
+            <div class="theme-switcher" role="group" aria-label="Theme">
+              <button type="button" class="theme-switcher-btn" data-theme-value="quiet-command"
+                      aria-label="Use quiet command theme" title="Quiet Command">
+                <span class="theme-switcher-icon" data-theme-icon aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg></span>
+              </button>
+              <button type="button" class="theme-switcher-btn" data-theme-value="field-command"
+                      aria-label="Use field command theme" title="Field Command">
+                <span class="theme-switcher-icon" data-theme-icon aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l7 6 7-6"/><path d="M5 13.5l7 6 7-6"/></svg></span>
+              </button>
+              <button type="button" class="theme-switcher-btn" data-theme-value="tactical-overdrive"
+                      aria-label="Use tactical overdrive theme" title="Tactical Overdrive">
+                <span class="theme-switcher-icon" data-theme-icon aria-hidden="true"><svg viewBox="0 0 24 24" width="1.4em" height="1.4em" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path transform="translate(12 6) scale(0.6) translate(-12 -10)" d="M12 2L14.09 8.26 20.51 8.26 15.21 12.18 17.3 18.44 12 14.52 6.7 18.44 8.79 12.18 3.49 8.26 9.91 8.26Z" fill="currentColor" stroke="none"/><path d="M3 12l9 4 9-4"/><path d="M3 15.5l9 4 9-4"/><path d="M3 19l9 4 9-4"/></svg></span>
+              </button>
+              <button type="button" class="theme-switcher-btn" data-theme-value="hacker"
+                      aria-label="Use hacker theme" title="Hacker">
+                <span class="theme-switcher-icon" data-theme-icon aria-hidden="true">&gt;_</span>
+              </button>
+            </div>
+          </div>
+          <div class="theme-menu-section">
+            <div class="theme-menu-label">Seed Colour</div>
+            <div class="palette-switcher" role="group" aria-label="Primary theme colour">
+              <label class="palette-color palette-color-wheel" title="Custom colour">
+                <input type="color" value="#00783c" data-theme-accent aria-label="Custom primary theme colour">
+                <span class="wheel" aria-hidden="true"></span>
+              </label>
+              <button type="button" class="palette-switcher-btn" data-palette-value="#31d7ff"
+                      aria-label="Use cyan palette" title="Cyan">
+                <span aria-hidden="true" style="--swatch:#31d7ff"></span>
+              </button>
+              <button type="button" class="palette-switcher-btn palette-switcher-btn-default" data-palette-value="#00783c"
+                      aria-label="Use default deep green palette" title="Default deep green">
+                <span aria-hidden="true" style="--swatch:#00783c"></span>
+                <span class="palette-default-badge" aria-hidden="true">Default</span>
+              </button>
+              <button type="button" class="palette-switcher-btn" data-palette-value="#22c55e"
+                      aria-label="Use phosphor green palette" title="Phosphor green">
+                <span aria-hidden="true" style="--swatch:#22c55e"></span>
+              </button>
+              <button type="button" class="palette-switcher-btn" data-palette-value="#ff8a3d"
+                      aria-label="Use orange palette" title="Orange">
+                <span aria-hidden="true" style="--swatch:#ff8a3d"></span>
+              </button>
+              <button type="button" class="palette-switcher-btn" data-palette-value="#8fa85f"
+                      aria-label="Use olive drab palette" title="Olive drab">
+                <span aria-hidden="true" style="--swatch:#8fa85f"></span>
+              </button>
+              <button type="button" class="palette-switcher-btn" data-palette-value="#872d73"
+                      aria-label="Use pink palette" title="Pink">
+                <span aria-hidden="true" style="--swatch:#872d73"></span>
+              </button>
+              <button type="button" class="palette-switcher-btn" data-palette-value="#878787"
+                      aria-label="Use monochrome white-grey phosphor" title="White phosphor (mono)">
+                <span aria-hidden="true" style="--swatch:#878787"></span>
+              </button>
+            </div>
+          </div>
+          <button type="button" class="theme-reset" data-theme-reset>Reset to Hacker default</button>
+        </div>
+      </div>
+
+      <!-- UI size — A ──────● A 106% -->
+      <label class="ui-scale-control" title="UI size" aria-label="UI size">
+        <span class="ui-scale-mark" aria-hidden="true">A</span>
+        <input class="ui-scale-slider" type="range" min="0.9" max="1.35" step="0.01"
+               value="1" data-ui-scale aria-label="UI size">
+        <span class="ui-scale-mark ui-scale-mark-large" aria-hidden="true">A</span>
+        <span class="ui-scale-value" data-ui-scale-value aria-hidden="true">100%</span>
+      </label>
+    </div>
+
+    <div class="panes" id="panes"></div>
+  </div>
+
+  <script type="module" src="src/js/main.js"></script>
+</body>
+</html>

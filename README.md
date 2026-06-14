@@ -9,6 +9,10 @@ and is **MIT and shareable**.
 > Same engine: one token-driven theme system + one discipline (compositor-only effects).
 > Different leaf content: **editor / preview / file-tree** panes instead of terminals.
 
+**[Website](https://markdown-delight.brownfamilysports.com)** ·
+**[v0.1.0 release](https://github.com/parker-brown-family/markdown-delight/releases/tag/v0.1.0)** ·
+MIT source · source-only (GPL-3.0 binary boundary) · Linux only
+
 ## The bet (read `docs/PLAN.md` first)
 
 terminal-delight already proved the hard, generic thing — *GPUI can host a polished,
@@ -26,15 +30,17 @@ project. Full plan, gates, and the clean-room boundary: **[`docs/PLAN.md`](docs/
 
 | Path | What it is |
 |---|---|
-| `index.html`, `src/` | **Browser design reference** — zero-build ES modules + CSS custom properties. Ported theme engine + tiling chrome from terminal-delight, with a **live source ▸ preview demo**. The design source of truth for tokens, effect dials, chrome UX, and pane shapes. **Not foundation code.** |
-| `app/` | **Native GPUI app** (Rust, MIT) — the real product. Reuses the pinned `gpui` from `../zed-upstream`. Editing works (G0b passed): edit-by-default, tabs, tiling splits, pane drag-and-drop, per-pane themes, `ctrl+p` finder, session restore. Selections · undo · find are next. |
+| `prototype.html`, `src/` | **Browser design reference** — zero-build ES modules + CSS custom properties. Ported theme engine + tiling chrome from terminal-delight, with a **live source ▸ preview demo**. The design source of truth for tokens, effect dials, chrome UX, and pane shapes. **Not foundation code.** (`index.html` is the GitHub Pages landing page.) |
+| `app/` | **Native GPUI app** (Rust, MIT) — the real product. Reuses the pinned `gpui` from `../zed-upstream`. Edit-by-default, tabs, tiling splits, pane drag-and-drop, per-pane themes, `ctrl+p` finder, session restore, full text selection + clipboard, and **comment mode** (Google-Docs-style review). |
 
 ## Run the design reference
 
 ```bash
 npm run dev          # python3 -m http.server 4323  (zero deps)
 ```
-Open <http://localhost:4323>. Deep-link a theme: `?theme=tactical-overdrive&seed=%2331d7ff`.
+Open <http://localhost:4323/prototype.html> for the live source ▸ preview demo
+(`/` serves the landing page). Deep-link a theme:
+`?theme=tactical-overdrive&seed=%2331d7ff`.
 
 No build step. Pure ES modules + CSS custom properties.
 
@@ -65,10 +71,12 @@ cargo build --release
 See **[`BUILDING.md`](BUILDING.md)** for the full step-by-step, system
 dependencies, and the directory layout the path-deps expect.
 
-Keys: `ctrl+e` source↔preview · `ctrl+s` save · `ctrl+alt+r`/`ctrl+alt+d`
-split right/down · `ctrl+shift+t` new tab · `ctrl+pgup/pgdn` switch tab ·
+Keys: `ctrl+e` source↔preview · `ctrl+s` save · `ctrl+shift+c` comment mode ·
+`ctrl+shift+a` all-comments browser · `ctrl+alt+r`/`ctrl+alt+d` split
+right/down · `ctrl+shift+t` new tab · `ctrl+pgup/pgdn` switch tab ·
 `alt+arrows` pane focus · `ctrl+w` close pane · right-click tab: rename.
-Click places the cursor; the live theme file is
+Source mode has full text selection (Shift+arrows / word & doc motion) and
+clipboard. Click places the cursor; the live theme file is
 `~/.config/markdown-delight/theme.toml` (hot-reloads while running).
 
 ## What works today
@@ -84,7 +92,10 @@ Click places the cursor; the live theme file is
 | Native: **monitor-wrap CRT** — master frame, per-screen frames, scanlines, tracking, flicker, jiggle, barrel warp | ✅ |
 | Native: hot-reload theme (`~/.config/markdown-delight/theme.toml`) | ✅ |
 | Native: **EDITING** — Ctrl+E source mode (rope + cursor), Ctrl+S atomic save — **G0b PASSED** | ✅ |
-| Selections, undo, find · tabs/splits | ⏭ next |
+| Native: **text selection + clipboard** — Shift/word/doc motion, cut/copy/paste, shift-click | ✅ |
+| Native: tabs · tiling splits · pane drag-and-drop · notebooks · session restore | ✅ |
+| Native: **comment mode** — Google-Docs-style block + range review, decay, all-comments browser, export | ✅ |
+| Undo/redo · find · file-tree | ⏭ next |
 
 ![native render, hacker theme](assets/preview-hacker-render.png)
 
@@ -113,10 +124,12 @@ trigger · 4 icon themes with tooltips · seed-colour wheel + swatches with a De
 
 ## Roadmap (see `docs/PLAN.md` §3)
 
-- **0.1** — two-pane editor: rope-backed syntax-highlighted source + live comrak preview, save, theme hot-reload.
-- **0.2** — tabs · file-tree · session restore · atomic save + external-change detect · **set-as-default-handler** · packaging.
+- **0.1 — shipped** ✅ — two-pane editor (rope source + live comrak preview),
+  atomic save, theme hot-reload, tabs/tiling/notebooks/session-restore, full
+  text selection + clipboard, set-as-default-handler, and **comment mode**.
+- **0.2** — undo/redo · find/replace · file-tree · external-change detect · range comments across blocks.
 - **0.4** — **"Live Preview" hybrid** (Obsidian-style inline styling — the signature delight).
-- **1.0** — big-file rigor, find/replace, multi-cursor, theme gallery.
+- **1.0** — big-file rigor, multi-cursor, theme gallery, comment export formats.
 
 ## License
 

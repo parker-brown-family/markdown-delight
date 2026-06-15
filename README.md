@@ -116,7 +116,7 @@ clipboard. Click places the cursor; the live theme file is
 | Native: **comment mode** — Google-Docs-style block + range review, decay, all-comments browser, export | ✅ |
 | Undo/redo · find · file-tree | ⏭ next |
 
-![native render, hacker theme](assets/preview-hacker-render.png)
+![native render, hacker theme](assets/hero-editor.png)
 
 ## Themes — the IMT Field-Terminal CRT spec
 

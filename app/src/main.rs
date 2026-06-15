@@ -997,6 +997,109 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The resolved appearance for the open tray's scope (pane override resolved
+    /// against outer, or the outer config itself).
+    fn scope_resolved(&self, cx: &App) -> appearance::Resolved {
+        match self.theme_menu {
+            Some(MenuScope::Pane(id)) => self
+                .find_pane(id)
+                .map(|p| p.read(cx).resolved(cx))
+                .unwrap_or_else(|| self.outer_resolved()),
+            _ => self.outer_resolved(),
+        }
+    }
+
+    fn outer_resolved(&self) -> appearance::Resolved {
+        appearance::Resolved {
+            colour: self.outer.colour.clone(),
+            texture: self.outer.texture.clone(),
+            grade: self.outer.grade,
+            curve: self.outer.curve,
+        }
+    }
+
+    /// TEXTURE group — borrow another theme's CRT dials (`Some(id)`) or follow
+    /// the colour theme's own (`None`).
+    fn set_menu_texture(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        match self.theme_menu {
+            Some(MenuScope::Pane(pid)) => {
+                if let Some(pane) = self.find_pane(pid) {
+                    pane.update(cx, |p, cx| {
+                        p.appearance.set_texture(appearance::Texture { id });
+                        cx.notify();
+                    });
+                }
+            }
+            _ => {
+                self.outer.texture.id = id;
+                self.rebuild_outer(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// GRADE group — nudge one monitor-OSD channel by `delta` (clamped).
+    fn bump_grade(&mut self, key: appearance::GradeKey, delta: f32, cx: &mut Context<Self>) {
+        let mut g = self.scope_resolved(cx).grade;
+        g.set(key, g.get(key) + delta);
+        match self.theme_menu {
+            Some(MenuScope::Pane(pid)) => {
+                if let Some(pane) = self.find_pane(pid) {
+                    pane.update(cx, |p, cx| {
+                        p.appearance.set_grade(g);
+                        cx.notify();
+                    });
+                }
+            }
+            _ => {
+                self.outer.grade = g;
+                self.rebuild_outer(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// GRADE group — reset every channel to neutral.
+    fn reset_grade(&mut self, cx: &mut Context<Self>) {
+        let g = appearance::Grade::default();
+        match self.theme_menu {
+            Some(MenuScope::Pane(pid)) => {
+                if let Some(pane) = self.find_pane(pid) {
+                    pane.update(cx, |p, cx| {
+                        p.appearance.set_grade(g);
+                        cx.notify();
+                    });
+                }
+            }
+            _ => {
+                self.outer.grade = g;
+                self.rebuild_outer(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// CURVE group — toggle the screen curvature on/off.
+    fn toggle_curve(&mut self, cx: &mut Context<Self>) {
+        let mut c = self.scope_resolved(cx).curve;
+        c.on = !c.on;
+        match self.theme_menu {
+            Some(MenuScope::Pane(pid)) => {
+                if let Some(pane) = self.find_pane(pid) {
+                    pane.update(cx, |p, cx| {
+                        p.appearance.set_curve(c);
+                        cx.notify();
+                    });
+                }
+            }
+            _ => {
+                self.outer.curve = c;
+                self.rebuild_outer(cx);
+            }
+        }
+        cx.notify();
+    }
+
     /// "Follow outer" — every group of a pane goes back to inheriting (overrides
     /// retained but hidden, so re-pinning restores them).
     fn clear_pane_override(&mut self, cx: &mut Context<Self>) {
@@ -2236,6 +2339,7 @@ fn seed_swatch(color: Option<Hsla>, active: bool) -> gpui::Div {
 fn theme_menu_overlay(
     is_pane: bool,
     cur: (String, Option<Hsla>),
+    appr: appearance::Resolved,
     at: Option<gpui::Point<Pixels>>,
     th: &theme::Theme,
     themes: &[(String, &'static str)],
@@ -2287,8 +2391,103 @@ fn theme_menu_overlay(
             .child(s.to_string())
     };
 
-    const PANEL_W: f32 = 286.;
-    const PANEL_H_EST: f32 = 188.;
+    // ---- TEXTURE row: "own" (follow the colour theme) + borrow another tube ----
+    let mut tex_row = div().flex().flex_row().flex_wrap().gap_2();
+    tex_row = tex_row.child(
+        theme_icon_btn(th, "○", "own", appr.texture.id.is_none()).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.set_menu_texture(None, cx);
+            }),
+        ),
+    );
+    for (name, glyph) in themes {
+        let active = appr.texture.id.as_deref() == Some(name.as_str());
+        let pick = name.clone();
+        tex_row = tex_row.child(theme_icon_btn(th, glyph, name, active).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.set_menu_texture(Some(pick.clone()), cx);
+            }),
+        ));
+    }
+
+    // ---- DISPLAY GRADE: a −/value/+ stepper per monitor-OSD channel ----
+    let step_btn = |glyph: &str| {
+        div()
+            .w(px(18.))
+            .h(px(18.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .border_1()
+            .border_color(th.accent.alpha(0.4))
+            .bg(darken(th.frame_bg, 0.8))
+            .text_color(th.frame_text)
+            .cursor_pointer()
+            .hover(|s| s.border_color(th.accent).text_color(white()))
+            .child(glyph.to_string())
+    };
+    let grade = appr.grade;
+    let mut grade_box = div().flex().flex_col().gap_1();
+    for key in appearance::GradeKey::ALL {
+        let (min, max, _) = key.range();
+        let step = (max - min) / 10.0;
+        let v = grade.get(key);
+        grade_box = grade_box.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .w(px(64.))
+                        .text_size(px(9.))
+                        .text_color(th.text.alpha(0.7))
+                        .child(key.label().to_string()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .child(step_btn("−").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.bump_grade(key, -step, cx);
+                            }),
+                        ))
+                        .child(
+                            div()
+                                .w(px(34.))
+                                .flex()
+                                .justify_center()
+                                .text_size(px(9.))
+                                .text_color(th.text)
+                                .child(format!("{v:.2}")),
+                        )
+                        .child(step_btn("+").on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.bump_grade(key, step, cx);
+                            }),
+                        )),
+                ),
+        );
+    }
+
+    let curve_on = appr.curve.on;
+
+    const PANEL_W: f32 = 300.;
+    const PANEL_H_EST: f32 = 460.;
     let mut panel = div().absolute().w(px(PANEL_W));
     panel = match at {
         Some(p) => {
@@ -2331,7 +2530,48 @@ fn theme_menu_overlay(
         }))
         .child(theme_row)
         .child(label("SEED COLOUR"))
-        .child(seed_row);
+        .child(seed_row)
+        .child(label("TEXTURE — borrow a tube"))
+        .child(tex_row)
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(label("DISPLAY GRADE"))
+                .child(
+                    div()
+                        .text_size(px(8.5))
+                        .text_color(th.text.alpha(0.5))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(th.accent))
+                        .child("reset")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.reset_grade(cx);
+                            }),
+                        ),
+                ),
+        )
+        .child(grade_box)
+        .child(label("SCREEN CURVE"))
+        .child(
+            Workspace::bezel_btn(
+                th,
+                if curve_on { "curve: on" } else { "curve: off" },
+                curve_on,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_curve(cx);
+                }),
+            ),
+        );
 
     if is_pane {
         panel = panel.child(
@@ -3109,11 +3349,13 @@ impl Render for Workspace {
                 MenuScope::Outer => false,
             };
             let cur = self.menu_choice(cx);
+            let appr = self.scope_resolved(cx);
             let themes = theme::registry_list(cx);
             let at = self.menu_at;
             theme_menu_overlay(
                 is_pane,
                 cur,
+                appr,
                 at,
                 &tray_th,
                 &themes,

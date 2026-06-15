@@ -11,6 +11,7 @@
 //! close pane · ctrl+e: source ↔ preview · ctrl+s: save · bezel A–A scrubber:
 //! live text zoom. Opens in SOURCE mode: right-click → open → type.
 
+mod appearance;
 mod comment_ui;
 mod comments;
 mod crt;
@@ -474,9 +475,10 @@ struct Workspace {
     /// (a pane chip click). None anchor = the fixed top-right outer-button slot.
     theme_menu: Option<MenuScope>,
     menu_at: Option<gpui::Point<Pixels>>,
-    /// The current outer (window-wide) theme choice: (theme name, optional seed
-    /// hue). Applied to the global ActiveTheme; panes with no override follow it.
-    outer: (String, Option<Hsla>),
+    /// The current outer (window-wide) display config — colour / texture /
+    /// grade / curve. Mirrored to the `appearance::ActiveOuter` global; panes
+    /// resolve their own appearance against it.
+    outer: appearance::OuterAppearance,
     /// Live text-zoom scrubber: true while the knob is held; `font_track` holds
     /// the slider's painted bounds so a drag maps cursor-x → scale.
     font_drag: bool,
@@ -502,15 +504,17 @@ impl Workspace {
             confirm_close: None,
             theme_menu: None,
             menu_at: None,
-            outer: (theme::theme(cx).name.clone(), None),
+            outer: appearance::OuterAppearance::new(theme::theme(cx).name.clone()),
             font_drag: false,
             font_track: Arc::new(Mutex::new(None)),
             pane_seed: 0xD0C5,
             finder: None,
             index: finder::FileIndex::spawn(),
         };
+        // publish the outer look to the global panes resolve against
+        ws.rebuild_outer(cx);
         // the opening pane: SOURCE mode — right-click → open → start typing
-        let pane = ws.make_pane(Mode::Source, None, cx);
+        let pane = ws.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
         let doc = ws.doc.clone();
         ws.tabs.push(Tab {
             root: Node::Leaf(pane),
@@ -544,13 +548,14 @@ impl Workspace {
             confirm_close: None,
             theme_menu: None,
             menu_at: None,
-            outer: (theme::theme(cx).name.clone(), None),
+            outer: appearance::OuterAppearance::new(theme::theme(cx).name.clone()),
             font_drag: false,
             font_track: Arc::new(Mutex::new(None)),
             pane_seed: 0xD0C5,
             finder: None,
             index: finder::FileIndex::spawn(),
         };
+        ws.rebuild_outer(cx);
         ws.tabs.push(Tab {
             root: Node::Leaf(pane),
             name: None,
@@ -581,7 +586,7 @@ impl Workspace {
     fn make_pane(
         &mut self,
         mode: Mode,
-        theme: Option<String>,
+        appearance: appearance::PaneAppearance,
         cx: &mut Context<Self>,
     ) -> Entity<MdPane> {
         self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
@@ -592,7 +597,7 @@ impl Workspace {
             .map(|t| t.doc.clone())
             .unwrap_or_else(|| self.doc.clone());
         let seed = self.pane_seed;
-        cx.new(|cx| MdPane::new(doc, mode, seed, theme, cx))
+        cx.new(|cx| MdPane::new(doc, mode, seed, appearance, cx))
     }
 
     fn pane_count(&self) -> usize {
@@ -625,7 +630,7 @@ impl Workspace {
         let doc = cx.new(|_| Doc::new("untitled".to_string(), None, String::new()));
         self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
         let seed = self.pane_seed;
-        let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Source, seed, None, cx));
+        let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Source, seed, appearance::PaneAppearance::default(), cx));
         self.tabs.push(Tab {
             root: Node::Leaf(pane),
             name: Some("untitled".to_string()),
@@ -662,14 +667,9 @@ impl Workspace {
             // splitting a preview/review pane gives a source companion to edit in
             Mode::Preview | Mode::Comment => Mode::Source,
         };
-        // the split inherits the focused pane's theme override (name + seed)
-        let inherit_theme = focused_read.theme.clone();
-        let inherit_seed = focused_read.seed;
-        let new_pane = self.make_pane(new_mode, inherit_theme, cx);
-        new_pane.update(cx, |p, cx| {
-            p.seed = inherit_seed;
-            cx.notify();
-        });
+        // the split inherits the focused pane's full display config
+        let inherit = focused_read.appearance.clone();
+        let new_pane = self.make_pane(new_mode, inherit, cx);
         self.tabs[self.active].root.split_leaf(target, dir, new_pane);
         cx.notify();
     }
@@ -716,7 +716,7 @@ impl Workspace {
         }
         pane.update(cx, |p, _| p.closed = false);
         if self.tabs.is_empty() {
-            let fresh = self.make_pane(Mode::Source, None, cx);
+            let fresh = self.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
             let doc = fresh.read(cx).doc.clone();
             self.tabs.push(Tab {
                 root: Node::Leaf(fresh),
@@ -908,82 +908,83 @@ impl Workspace {
         }
     }
 
-    /// The (theme name, seed) currently in effect for the open tray's scope.
+    /// The resolved COLOUR group for the open tray's scope, as (theme name, seed).
     fn menu_choice(&self, cx: &App) -> (String, Option<Hsla>) {
-        match self.theme_menu {
-            Some(MenuScope::Pane(id)) => match self.find_pane(id) {
-                Some(p) => {
-                    let p = p.read(cx);
-                    let name = p
-                        .theme
-                        .clone()
-                        .unwrap_or_else(|| self.outer.0.clone());
-                    (name, p.seed)
-                }
-                None => self.outer.clone(),
-            },
-            _ => self.outer.clone(),
-        }
+        let colour = match self.theme_menu {
+            Some(MenuScope::Pane(id)) => self
+                .find_pane(id)
+                .map(|p| p.read(cx).resolved(cx).colour)
+                .unwrap_or_else(|| self.outer.colour.clone()),
+            _ => self.outer.colour.clone(),
+        };
+        let seed = colour.seed_hsla();
+        (colour.id, seed)
     }
 
-    /// Re-derive the global ActiveTheme from the current outer choice (theme +
-    /// seed). Panes with no override follow it; the bezel/chrome adopt it too.
+    /// Re-derive the globals from the current outer config: publish the outer
+    /// appearance (panes resolve against it) and the composed ActiveTheme that
+    /// the chrome/bezel + warp gate read directly.
     fn rebuild_outer(&self, cx: &mut Context<Self>) {
-        let (name, seed) = &self.outer;
-        let base = theme::resolve(cx, Some(name));
-        let t = match seed {
-            Some(s) => theme::recolor(&base, *s),
-            None => (*base).clone(),
+        let resolved = appearance::Resolved {
+            colour: self.outer.colour.clone(),
+            texture: self.outer.texture.clone(),
+            grade: self.outer.grade,
+            curve: self.outer.curve,
         };
+        let t = appearance::compose(cx, &resolved);
+        cx.set_global(appearance::ActiveOuter(self.outer.clone()));
         cx.set_global(theme::ActiveTheme(Arc::new(t)));
         theme::apply_warp_theme(cx);
     }
 
-    /// Pick a theme in the open tray (keeps the current seed).
+    /// Pick a theme in the open tray (keeps the current seed) — COLOUR group.
     fn set_menu_theme(&mut self, name: String, cx: &mut Context<Self>) {
         match self.theme_menu {
             Some(MenuScope::Pane(id)) => {
                 if let Some(pane) = self.find_pane(id) {
+                    let seed = pane.read(cx).resolved(cx).colour.seed;
                     pane.update(cx, |p, cx| {
-                        p.theme = Some(name);
+                        p.appearance.set_colour(appearance::Colour { id: name, seed });
                         cx.notify();
                     });
                 }
             }
             _ => {
-                self.outer.0 = name;
+                self.outer.colour.id = name;
                 self.rebuild_outer(cx);
             }
         }
         cx.notify();
     }
 
-    /// Pick a seed hue in the open tray (keeps the current theme).
+    /// Pick a seed hue in the open tray (keeps the current theme) — COLOUR group.
     fn set_menu_seed(&mut self, seed: Option<Hsla>, cx: &mut Context<Self>) {
+        let hex = seed.map(appearance::hsla_to_hex);
         match self.theme_menu {
             Some(MenuScope::Pane(id)) => {
                 if let Some(pane) = self.find_pane(id) {
+                    let id_now = pane.read(cx).resolved(cx).colour.id;
                     pane.update(cx, |p, cx| {
-                        p.seed = seed;
+                        p.appearance.set_colour(appearance::Colour { id: id_now, seed: hex });
                         cx.notify();
                     });
                 }
             }
             _ => {
-                self.outer.1 = seed;
+                self.outer.colour.seed = hex;
                 self.rebuild_outer(cx);
             }
         }
         cx.notify();
     }
 
-    /// "Follow outer" — clear a pane's override entirely (theme + seed).
+    /// "Follow outer" — every group of a pane goes back to inheriting (overrides
+    /// retained but hidden, so re-pinning restores them).
     fn clear_pane_override(&mut self, cx: &mut Context<Self>) {
         if let Some(MenuScope::Pane(id)) = self.theme_menu {
             if let Some(pane) = self.find_pane(id) {
                 pane.update(cx, |p, cx| {
-                    p.theme = None;
-                    p.seed = None;
+                    p.appearance.follow_outer();
                     cx.notify();
                 });
             }
@@ -1112,7 +1113,7 @@ impl Workspace {
         }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
-            let pane = self.make_pane(Mode::Source, None, cx);
+            let pane = self.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
             let doc = pane.read(cx).doc.clone();
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -1166,7 +1167,7 @@ impl Workspace {
             let doc = cx.new(|_| Doc::new(label.clone(), Some(p.clone()), text));
             self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
             let seed = self.pane_seed;
-            let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Preview, seed, None, cx));
+            let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Preview, seed, appearance::PaneAppearance::default(), cx));
             let name = e.name.or_else(|| Some(truncate_label(&label, 40)));
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -1430,7 +1431,7 @@ impl Workspace {
             }
         }
         if self.tabs.is_empty() {
-            let pane = self.make_pane(Mode::Source, None, cx);
+            let pane = self.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
             let doc = pane.read(cx).doc.clone();
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -3034,10 +3035,7 @@ impl Render for Workspace {
             let has_override = match scope {
                 MenuScope::Pane(id) => self
                     .find_pane(id)
-                    .map(|p| {
-                        let p = p.read(cx);
-                        p.theme.is_some() || p.seed.is_some()
-                    })
+                    .map(|p| !p.read(cx).appearance.is_pristine())
                     .unwrap_or(false),
                 MenuScope::Outer => false,
             };

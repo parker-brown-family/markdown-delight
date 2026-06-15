@@ -20,7 +20,7 @@ use gpui::{
     hsla, linear_color_stop, linear_gradient, point, prelude::*, px, white,
 };
 
-use crate::{comment_ui, comments, crt, editor, render, theme, warp};
+use crate::{appearance, comment_ui, comments, crt, editor, render, theme, warp};
 
 const LINE_H: f32 = 21.;
 const PAD_X: f32 = 16.;
@@ -143,13 +143,10 @@ pub struct MdPane {
     /// comment author for this session (git user.name → $USER → anon)
     author: String,
     pub closed: bool,
-    /// Optional per-pane theme override (name into theme::ThemeRegistry).
-    /// None = follow the global active theme. New/split panes inherit this from
-    /// their origin pane; dragged panes carry it with them.
-    pub theme: Option<String>,
-    /// Optional per-pane SEED colour — folds this pane's tube onto one hue,
-    /// layered on top of `theme`. None = the (effective) theme's own colours.
-    pub seed: Option<gpui::Hsla>,
+    /// Per-pane display configuration: four independently-inheriting groups
+    /// (colour / texture / grade / curve), each with a "follow outer" toggle.
+    /// New/split panes inherit this from their origin; dragged panes carry it.
+    pub appearance: appearance::PaneAppearance,
     focus_handle: FocusHandle,
     fx: crt::Fx,
     scroll: ScrollHandle,
@@ -162,7 +159,7 @@ impl MdPane {
         doc: Entity<Doc>,
         mode: Mode,
         seed: u64,
-        theme: Option<String>,
+        appearance: appearance::PaneAppearance,
         cx: &mut Context<Self>,
     ) -> Self {
         // live preview: repaint when the shared doc changes
@@ -203,8 +200,7 @@ impl MdPane {
             show_browser: false,
             author: comments::default_author(),
             closed: false,
-            theme,
-            seed: None,
+            appearance,
             focus_handle: cx.focus_handle(),
             fx: crt::Fx::new(seed),
             scroll: ScrollHandle::new(),
@@ -213,14 +209,24 @@ impl MdPane {
         }
     }
 
-    /// The theme this pane renders with: its override (else the global active
-    /// theme), with its optional seed hue folded on top.
+    /// This pane's appearance, resolved against the workspace outer look —
+    /// every group (colour / texture / grade / curve) made concrete.
+    pub fn resolved(&self, cx: &gpui::App) -> appearance::Resolved {
+        self.appearance.effective(&appearance::outer(cx))
+    }
+
+    /// The theme this pane renders with: its four display-config groups composed
+    /// into one `Theme` (colour + seed, texture's CRT dials, curve gate, grade
+    /// baked into the colours).
     pub fn effective_theme(&self, cx: &gpui::App) -> Arc<theme::Theme> {
-        let base = theme::resolve(cx, self.theme.as_deref());
-        match self.seed {
-            Some(seed) => Arc::new(theme::recolor(&base, seed)),
-            None => base,
-        }
+        Arc::new(appearance::compose(cx, &self.resolved(cx)))
+    }
+
+    /// Effective text scale for this pane: the workspace scrubber × this pane's
+    /// grade text-size. Used everywhere `theme::font_scale()` was, so per-pane
+    /// zoom stays consistent with click→cursor math.
+    pub fn eff_scale(&self, cx: &gpui::App) -> f32 {
+        theme::font_scale() * self.resolved(cx).grade.text_scale
     }
 
     pub fn is_editing(&self) -> bool {
@@ -259,7 +265,7 @@ impl MdPane {
             return;
         };
         let h = f32::from(b.size.height);
-        let line_h = LINE_H * theme::font_scale();
+        let line_h = LINE_H * self.eff_scale(cx);
         let (line, _) = self.doc.read(cx).editor.line_col();
         let cursor_y = PAD_Y + line as f32 * line_h;
         let mut off = self.scroll.offset();
@@ -280,7 +286,7 @@ impl MdPane {
             return;
         };
         let off = self.scroll.offset();
-        let sc = theme::font_scale();
+        let sc = self.eff_scale(cx);
         // Follow the glass: a screen point inside a bent tube DISPLAYS content
         // sampled from warped(point), so a click must be pushed through the same
         // barrel curve the shader uses or the cursor lands off-target near the
@@ -1379,7 +1385,7 @@ impl MdPane {
         let e = &doc.editor;
         let (cur_line, cur_col) = e.line_col();
         let sel = e.selection();
-        let line_h = px(LINE_H * theme::font_scale());
+        let line_h = px(LINE_H * self.eff_scale(cx));
         let sel_bg = th.accent.alpha(0.30);
         let n_lines = e.line_count();
         (0..n_lines)
@@ -1565,7 +1571,7 @@ fn darken(mut c: gpui::Hsla, f: f32) -> gpui::Hsla {
 impl Render for MdPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.effective_theme(cx);
-        let sc = theme::font_scale();
+        let sc = self.eff_scale(cx);
         let editing = self.mode == Mode::Source;
         let line_count = self.doc.read(cx).editor.line_count();
         let rail_count = if editing { line_count } else { 99 };

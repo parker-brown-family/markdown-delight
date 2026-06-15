@@ -1925,6 +1925,25 @@ impl Workspace {
             self.open_finder(window, cx);
             return;
         }
+        // F1 / Ctrl+/ → toggle the keys-&-tips help on the active pane. Handled
+        // window-level so it fires regardless of which pane holds focus.
+        if ks.key.as_str() == "f1" || (m.control && !m.alt && ks.key.as_str() == "/") {
+            let target: Option<Entity<MdPane>> = {
+                self.tabs.get(self.active).and_then(|tab| {
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    leaves
+                        .iter()
+                        .find(|p| p.focus_handle(cx).is_focused(window))
+                        .or_else(|| leaves.first())
+                        .map(|p| (*p).clone())
+                })
+            };
+            if let Some(pane) = target {
+                pane.update(cx, |p, cx| p.toggle_help(cx));
+            }
+            return;
+        }
         // the inline rename box owns the keyboard while open
         if let Some((tab_i, mut buf)) = self.renaming.take() {
             match ks.key.as_str() {

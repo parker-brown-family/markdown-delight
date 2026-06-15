@@ -23,6 +23,15 @@ pinned gpui checkout — it touches only `crates/gpui_wgpu`. See `BUILDING.md`.
 `language` crates are GPL-3.0-or-later and are NOT used, linked, or copied.
 The editor core here is original work on `ropey`. (See `docs/PLAN.md` §2.)
 
+**Binary distribution (MIT-clean):** the vendored Zed/gpui graph would otherwise
+pull in two GPL-3.0 leaf crates (`ztracing`, `zlog`). `scripts/prepare-gpui.sh`
+applies `patches/sever-gpl-crates.patch` to cut them out of the build, so the
+**shipped binary links no GPL code and is MIT-distributable** — it is released as
+a self-contained AppImage. This is purely a packaging/link-time concern and is
+independent of the clean-room rule above (the GPL editor/language crates were
+never used regardless). `cargo deny check licenses` passes against the
+MIT/Apache/BSD/ISC allowlist with no GPL exceptions.
+
 ## Fonts
 
 | Font | License |

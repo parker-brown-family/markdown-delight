@@ -11,7 +11,25 @@ and is **MIT and shareable**.
 
 **[Website](https://markdown-delight.brownfamilysports.com)** ·
 **[v0.1.0 release](https://github.com/parker-brown-family/markdown-delight/releases/tag/v0.1.0)** ·
-MIT source · source-only (GPL-3.0 binary boundary) · Linux only
+MIT (source + binary) · Linux · AppImage
+
+## Download
+
+The shipped binary is a **self-contained MIT AppImage** — we sever the GPL crates
+the Zed/gpui graph would otherwise link (`patches/sever-gpl-crates.patch`, applied
+by `scripts/prepare-gpui.sh`), so there's no GPL boundary on what you run. Grab the
+latest release and go:
+
+```bash
+curl -fL -o markdown-delight.AppImage \
+  https://github.com/parker-brown-family/markdown-delight/releases/latest/download/markdown-delight-x86_64.AppImage
+chmod +x markdown-delight.AppImage
+./markdown-delight.AppImage
+```
+
+Needs **glibc ≥ 2.35** (Ubuntu 22.04+ / Debian 12+) and a working host
+GPU/Vulkan stack — the AppImage bundles the app, **not** your graphics drivers.
+Prefer to build it yourself? See [Build the native app](#build-the-native-app).
 
 ## The bet (read `docs/PLAN.md` first)
 

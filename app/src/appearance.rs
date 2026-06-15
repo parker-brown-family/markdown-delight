@@ -61,9 +61,7 @@ impl Default for Grade {
     }
 }
 
-/// The five tunable channels of a [`Grade`], for slider UIs.
-// Wired by the monitor-OSD tray (next increment); the model + compose are live.
-#[allow(dead_code)]
+/// The five tunable channels of a [`Grade`], for the monitor-OSD tray.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GradeKey {
     Brightness,
@@ -73,7 +71,6 @@ pub enum GradeKey {
     TextScale,
 }
 
-#[allow(dead_code)] // consumed by the OSD tray (next increment)
 impl GradeKey {
     pub const ALL: [GradeKey; 5] = [
         GradeKey::Brightness,
@@ -112,7 +109,6 @@ impl Grade {
             && near(self.text_scale, 1.0)
     }
 
-    #[allow(dead_code)] // OSD tray reads channel values for slider positions
     pub fn get(&self, key: GradeKey) -> f32 {
         match key {
             GradeKey::Brightness => self.brightness,
@@ -123,7 +119,6 @@ impl Grade {
         }
     }
 
-    #[allow(dead_code)] // OSD tray writes channel values from slider drags
     pub fn set(&mut self, key: GradeKey, v: f32) {
         let (min, max, _) = key.range();
         let v = v.clamp(min, max);
@@ -339,17 +334,14 @@ impl PaneAppearance {
         self.colour = Some(c);
         self.inherit_colour = false;
     }
-    #[allow(dead_code)] // wired by the TEXTURE row of the OSD tray (next increment)
     pub fn set_texture(&mut self, t: Texture) {
         self.texture = Some(t);
         self.inherit_texture = false;
     }
-    #[allow(dead_code)] // wired by the GRADE sliders of the OSD tray (next increment)
     pub fn set_grade(&mut self, g: Grade) {
         self.grade = Some(g);
         self.inherit_grade = false;
     }
-    #[allow(dead_code)] // wired by the CURVE toggle of the OSD tray (next increment)
     pub fn set_curve(&mut self, c: Curve) {
         self.curve = Some(c);
         self.inherit_curve = false;

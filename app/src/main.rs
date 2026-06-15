@@ -3672,6 +3672,26 @@ fn open_doc_window(label: String, path: Option<PathBuf>, text: String, cx: &mut 
         move |window, cx| {
             // match the .desktop StartupWMClass so the dock shows OUR icon
             window.set_app_id("markdown-delight");
+            // first-run portability diagnostics for untested boxes (AMD/Intel,
+            // Wayland, fractional scaling): record installed fonts so the editor
+            // can fall back deliberately, and surface the GPU/driver gpui chose.
+            pane::init_font_registry(cx.text_system().all_font_names());
+            if let Some(msg) = pane::font_diagnostic() {
+                eprintln!("markdown-delight: {msg}");
+            }
+            if let Some(g) = window.gpu_specs() {
+                eprintln!(
+                    "markdown-delight: GPU {} (driver {} {}){}",
+                    g.device_name,
+                    g.driver_name,
+                    g.driver_info,
+                    if g.is_software_emulated {
+                        " [SOFTWARE renderer — expect low FPS]"
+                    } else {
+                        ""
+                    },
+                );
+            }
             cx.new(|cx| Workspace::new(doc.clone(), window, cx))
         },
     )

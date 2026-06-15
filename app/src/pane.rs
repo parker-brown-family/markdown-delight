@@ -9,7 +9,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     ops::Range,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -548,10 +548,12 @@ impl MdPane {
         cx.notify();
     }
 
-    /// Ctrl+C — copy the selection to the system clipboard.
+    /// Ctrl+C — copy the selection to the system clipboard (and the X11 PRIMARY
+    /// selection, so middle-click paste works too; no-op on Wayland).
     fn copy(&mut self, cx: &mut Context<Self>) {
         if let Some(text) = self.doc.read(cx).editor.selected_text() {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
         }
     }
 
@@ -560,7 +562,8 @@ impl MdPane {
         let Some(text) = self.doc.read(cx).editor.selected_text() else {
             return;
         };
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        cx.write_to_primary(ClipboardItem::new_string(text));
         self.doc.update(cx, |doc, cx| {
             doc.editor.backspace(); // deletes the active selection
             doc.reparse();
@@ -1883,6 +1886,69 @@ fn col_byte(s: &str, col: usize) -> usize {
     s.char_indices().nth(col).map(|(b, _)| b).unwrap_or(s.len())
 }
 
+// ── font fallback (portability) ─────────────────────────────────────────────
+
+/// Font families installed on this system, captured once at startup so the
+/// editor can fall back deliberately instead of letting gpui pick a silent
+/// substitute on a box without JetBrains Mono.
+static AVAILABLE_FONTS: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Common monospace families to try, in order, when the requested one is absent.
+const MONO_FALLBACKS: &[&str] = &[
+    "JetBrains Mono",
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "Source Code Pro",
+    "Ubuntu Mono",
+    "monospace",
+];
+
+/// Record the system's available font families. Call once at startup with
+/// `cx.text_system().all_font_names()` (see main.rs).
+pub fn init_font_registry(names: Vec<String>) {
+    let _ = AVAILABLE_FONTS.set(names);
+}
+
+fn font_available(name: &str) -> bool {
+    match AVAILABLE_FONTS.get() {
+        Some(list) => list.iter().any(|n| n.eq_ignore_ascii_case(name)),
+        // registry not populated (e.g. unit tests) — assume present, don't rewrite
+        None => true,
+    }
+}
+
+/// Resolve the requested family against what's actually installed, falling back
+/// through a chain of common monospace families. Returns the family to request.
+pub fn resolve_family(requested: &str) -> String {
+    if font_available(requested) {
+        return requested.to_string();
+    }
+    for fb in MONO_FALLBACKS {
+        if !fb.eq_ignore_ascii_case(requested) && font_available(fb) {
+            return (*fb).to_string();
+        }
+    }
+    // nothing matched; hand back the request and let gpui do its own fallback
+    requested.to_string()
+}
+
+/// Startup diagnostic: if the ship-default family isn't installed, describe the
+/// fallback that will be used (so a silent substitution can't hide). Returns
+/// None when the default is present. Call after `init_font_registry`.
+pub fn font_diagnostic() -> Option<String> {
+    let want = "JetBrains Mono";
+    let got = resolve_family(want);
+    if got == want {
+        return None;
+    }
+    let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
+    Some(format!(
+        "font '{want}' not installed; falling back to '{got}' ({n} families available). \
+         Install JetBrains Mono for the intended look."
+    ))
+}
+
 /// A centered toast pill floated at the bottom of the tube (transient feedback).
 fn toast_pill(th: &theme::Theme, msg: SharedString) -> gpui::Div {
     div()
@@ -2132,8 +2198,12 @@ impl Render for MdPane {
                 }))
                 .on_mouse_up(
                     MouseButton::Left,
-                    cx.listener(|pane, _: &MouseUpEvent, _w, _cx| {
+                    cx.listener(|pane, _: &MouseUpEvent, _w, cx| {
                         pane.text_dragging = false;
+                        // publish a drag-selection to the X11 PRIMARY (middle-click paste)
+                        if let Some(text) = pane.doc.read(cx).editor.selected_text() {
+                            cx.write_to_primary(ClipboardItem::new_string(text));
+                        }
                     }),
                 )
             })
@@ -2181,7 +2251,7 @@ impl Render for MdPane {
             .size_full()
             .flex()
             .flex_col()
-            .font_family(th.font_family.clone())
+            .font_family(resolve_family(&th.font_family))
             .text_size(px(th.font_size * sc))
             .text_color(th.text)
             .pt(px(jiggle.max(0.)))

@@ -186,7 +186,9 @@ pub fn recolor(base: &Theme, seed: Hsla) -> Theme {
     t
 }
 
-/// Look up a theme by name from the global registry (None → global active theme).
+/// Look up a theme by name from the global registry (None → global active
+/// theme). The hot-reloaded `theme.toml` is kept in the registry under its own
+/// name (see `upsert_registry`), so resolving it by name returns the live copy.
 pub fn resolve(cx: &App, name: Option<&str>) -> Arc<Theme> {
     match name {
         Some(n) => cx
@@ -194,6 +196,20 @@ pub fn resolve(cx: &App, name: Option<&str>) -> Arc<Theme> {
             .by_name(n)
             .unwrap_or_else(|| theme(cx)),
         None => theme(cx),
+    }
+}
+
+/// Insert or replace a theme in the registry by name — keeps the registry the
+/// single source of truth for `resolve`, including the live hot-reloaded theme.
+fn upsert_registry(cx: &mut App, t: Arc<Theme>) {
+    if !cx.has_global::<ThemeRegistry>() {
+        cx.set_global(ThemeRegistry(vec![t]));
+        return;
+    }
+    let reg = cx.global_mut::<ThemeRegistry>();
+    match reg.0.iter_mut().find(|x| x.name == t.name) {
+        Some(slot) => *slot = t,
+        None => reg.0.push(t),
     }
 }
 
@@ -319,8 +335,12 @@ pub fn init(cx: &mut App) {
         .and_then(|s| parse(&s).ok())
         .unwrap_or_else(|| parse(DEFAULT_THEME_TOML).expect("embedded theme parses"));
     apply_warp(&initial);
-    cx.set_global(ActiveTheme(Arc::new(initial)));
+    let initial = Arc::new(initial);
+    cx.set_global(ActiveTheme(initial.clone()));
     cx.set_global(ThemeRegistry(build_registry()));
+    // the live theme.toml wins its name slot in the registry (so panes that
+    // resolve it by name get the hot-reloaded copy, not the bundled one)
+    upsert_registry(cx, initial);
 
     let mut last = mtime(&path);
     cx.spawn(async move |cx| {
@@ -335,8 +355,12 @@ pub fn init(cx: &mut App) {
                     match parse(&source) {
                         Ok(theme) => {
                             apply_warp(&theme);
+                            let theme = Arc::new(theme);
                             let _ = cx.update(|cx| {
-                                cx.set_global(ActiveTheme(Arc::new(theme)));
+                                cx.set_global(ActiveTheme(theme.clone()));
+                                // keep the registry's same-named slot live too,
+                                // so inheriting panes pick up the edit
+                                upsert_registry(cx, theme);
                                 cx.refresh_windows();
                             });
                         }

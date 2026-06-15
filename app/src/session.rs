@@ -14,6 +14,10 @@ pub struct Session {
     pub active: usize,
     #[serde(default)]
     pub tabs: Vec<SessionTab>,
+    /// The workspace ("outer") appearance — global theme id, seed, texture,
+    /// grade, curve — so the chosen look survives a restart.
+    #[serde(default)]
+    pub outer: Option<crate::appearance::OuterAppearance>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

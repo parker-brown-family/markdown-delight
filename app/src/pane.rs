@@ -593,19 +593,19 @@ impl MdPane {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
-        match self.sel_index(i, pos, cx) {
-            Some(ix) => {
-                self.sel = Some(Sel {
-                    block: i,
-                    anchor: ix,
-                    head: ix,
-                });
-                self.sel_dragging = true;
-                cx.notify();
-            }
-            // no layout captured (non-paragraph) → whole-block comment on release
-            None => self.open_block_comment(i, window, cx),
-        }
+        // A press NEVER opens a comment — it only arms a potential selection.
+        // end_sel decides on RELEASE ("click off"): a real drag → range comment,
+        // a plain click → whole-block comment. Paragraphs range-select via their
+        // captured layout; other blocks have no index (→ 0) so any release on
+        // them collapses to the whole-block comment.
+        let ix = self.sel_index(i, pos, cx).unwrap_or(0);
+        self.sel = Some(Sel {
+            block: i,
+            anchor: ix,
+            head: ix,
+        });
+        self.sel_dragging = true;
+        cx.notify();
     }
 
     fn update_sel(&mut self, pos: gpui::Point<Pixels>, cx: &mut Context<Self>) {

@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# one in-flight run per ref; new pushes cancel stale runs
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust (fmt · clippy · test · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libfontconfig1-dev libwayland-dev libx11-dev \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Prepare pinned gpui (clone zed + apply td-crt-pass)
+        working-directory: .
+        run: bash scripts/prepare-gpui.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+      - run: cargo fmt -- --check
+      - run: cargo check --locked
+      - run: cargo clippy --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+
+  supply-chain:
+    name: supply-chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare pinned gpui
+        run: bash scripts/prepare-gpui.sh
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: cargo-deny
+        working-directory: app
+        run: cargo deny check
+
+  prototype:
+    name: browser prototype (syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: node --check each ES module
+        run: |
+          for f in src/js/*.js; do
+            echo "checking $f"
+            node --check "$f"
+          done

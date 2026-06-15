@@ -30,10 +30,10 @@ use std::time::{Duration, Instant};
 use std::{env, fs, path::PathBuf};
 
 use gpui::{
-    App, Bounds, BoxShadow, Context, Entity, EntityId, Focusable, HighlightStyle, Hsla,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString,
-    StyledText, TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, hsla,
-    linear_color_stop, linear_gradient, point, prelude::*, px, size, white,
+    canvas, div, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size, white, App,
+    Bounds, BoxShadow, Context, Entity, EntityId, Focusable, HighlightStyle, Hsla, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, SharedString, StyledText,
+    TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_platform::application;
 use pane::{Doc, MdPane, Mode};
@@ -155,7 +155,13 @@ impl Node {
     fn reap(self, cx: &App) -> Option<Node> {
         match self {
             Node::Leaf(e) => (!e.read(cx).closed).then_some(Node::Leaf(e)),
-            Node::Split { id, dir, ratio, a, b } => match (a.reap(cx), b.reap(cx)) {
+            Node::Split {
+                id,
+                dir,
+                ratio,
+                a,
+                b,
+            } => match (a.reap(cx), b.reap(cx)) {
                 (Some(a), Some(b)) => Some(Node::Split {
                     id,
                     dir,
@@ -185,7 +191,9 @@ impl Node {
     fn set_ratio(&mut self, target: u64, value: f32) -> bool {
         match self {
             Node::Leaf(_) => false,
-            Node::Split { id, ratio, a, b, .. } => {
+            Node::Split {
+                id, ratio, a, b, ..
+            } => {
                 if *id == target {
                     *ratio = value.clamp(0.15, 0.85);
                     true
@@ -568,17 +576,15 @@ impl Workspace {
 
     /// The frame-wide jiggle ticker (shared by `new` and `from_pane`).
     fn start_jiggle(&self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(60))
-                    .await;
-                let _ = this.update(cx, |ws: &mut Workspace, cx| {
-                    if ws.jiggle.tick() {
-                        cx.notify();
-                    }
-                });
-            }
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(60))
+                .await;
+            let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                if ws.jiggle.tick() {
+                    cx.notify();
+                }
+            });
         })
         .detach();
     }
@@ -630,7 +636,15 @@ impl Workspace {
         let doc = cx.new(|_| Doc::new("untitled".to_string(), None, String::new()));
         self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
         let seed = self.pane_seed;
-        let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Source, seed, appearance::PaneAppearance::default(), cx));
+        let pane = cx.new(|cx| {
+            MdPane::new(
+                doc.clone(),
+                Mode::Source,
+                seed,
+                appearance::PaneAppearance::default(),
+                cx,
+            )
+        });
         self.tabs.push(Tab {
             root: Node::Leaf(pane),
             name: Some("untitled".to_string()),
@@ -670,7 +684,9 @@ impl Workspace {
         // the split inherits the focused pane's full display config
         let inherit = focused_read.appearance.clone();
         let new_pane = self.make_pane(new_mode, inherit, cx);
-        self.tabs[self.active].root.split_leaf(target, dir, new_pane);
+        self.tabs[self.active]
+            .root
+            .split_leaf(target, dir, new_pane);
         cx.notify();
     }
 
@@ -699,19 +715,16 @@ impl Workspace {
         let mut i = 0;
         while i < self.tabs.len() {
             let tab = self.tabs.remove(i);
-            match tab.root.reap(cx) {
-                Some(root) => {
-                    self.tabs.insert(
-                        i,
-                        Tab {
-                            root,
-                            name: tab.name,
-                            doc: tab.doc,
-                        },
-                    );
-                    i += 1;
-                }
-                None => {}
+            if let Some(root) = tab.root.reap(cx) {
+                self.tabs.insert(
+                    i,
+                    Tab {
+                        root,
+                        name: tab.name,
+                        doc: tab.doc,
+                    },
+                );
+                i += 1;
             }
         }
         pane.update(cx, |p, _| p.closed = false);
@@ -777,7 +790,9 @@ impl Workspace {
             let mut leaves = vec![];
             t.root.leaves(&mut leaves);
             if leaves.iter().any(|p| p.entity_id() == target_id) {
-                if t.root.split_leaf_with(target_id, dir, d.pane.clone(), dragged_first) {
+                if t.root
+                    .split_leaf_with(target_id, dir, d.pane.clone(), dragged_first)
+                {
                     self.active = ti;
                     window.focus(&d.pane.focus_handle(cx), cx);
                 }
@@ -944,7 +959,8 @@ impl Workspace {
                 if let Some(pane) = self.find_pane(id) {
                     let seed = pane.read(cx).resolved(cx).colour.seed;
                     pane.update(cx, |p, cx| {
-                        p.appearance.set_colour(appearance::Colour { id: name, seed });
+                        p.appearance
+                            .set_colour(appearance::Colour { id: name, seed });
                         cx.notify();
                     });
                 }
@@ -965,7 +981,10 @@ impl Workspace {
                 if let Some(pane) = self.find_pane(id) {
                     let id_now = pane.read(cx).resolved(cx).colour.id;
                     pane.update(cx, |p, cx| {
-                        p.appearance.set_colour(appearance::Colour { id: id_now, seed: hex });
+                        p.appearance.set_colour(appearance::Colour {
+                            id: id_now,
+                            seed: hex,
+                        });
                         cx.notify();
                     });
                 }
@@ -1001,7 +1020,10 @@ impl Workspace {
         for t in &self.tabs {
             let mut l = vec![];
             t.root.leaves(&mut l);
-            n += l.iter().filter(|p| p.read(cx).doc.entity_id() == id).count();
+            n += l
+                .iter()
+                .filter(|p| p.read(cx).doc.entity_id() == id)
+                .count();
         }
         n
     }
@@ -1167,7 +1189,15 @@ impl Workspace {
             let doc = cx.new(|_| Doc::new(label.clone(), Some(p.clone()), text));
             self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
             let seed = self.pane_seed;
-            let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Preview, seed, appearance::PaneAppearance::default(), cx));
+            let pane = cx.new(|cx| {
+                MdPane::new(
+                    doc.clone(),
+                    Mode::Preview,
+                    seed,
+                    appearance::PaneAppearance::default(),
+                    cx,
+                )
+            });
             let name = e.name.or_else(|| Some(truncate_label(&label, 40)));
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -1215,9 +1245,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let mut last = String::new();
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(2))
-                    .await;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
                 let res = this.update(cx, |ws, cx| {
                     let sig = ws.session_signature(cx);
                     if sig != last {
@@ -1357,7 +1385,11 @@ impl Workspace {
     }
 
     /// The effective theme + dirty file names for the close-confirm modal.
-    fn confirm_context(&self, req: CloseRequest, cx: &Context<Self>) -> (Arc<theme::Theme>, Vec<String>) {
+    fn confirm_context(
+        &self,
+        req: CloseRequest,
+        cx: &Context<Self>,
+    ) -> (Arc<theme::Theme>, Vec<String>) {
         match req {
             CloseRequest::Pane(id) => {
                 let th = self
@@ -1398,7 +1430,9 @@ impl Workspace {
         };
         let w = f32::from(b.size.width).max(1.);
         let t = ((x_px - f32::from(b.origin.x)) / w).clamp(0., 1.);
-        theme::set_font_scale(theme::FONT_SCALE_MIN + t * (theme::FONT_SCALE_MAX - theme::FONT_SCALE_MIN));
+        theme::set_font_scale(
+            theme::FONT_SCALE_MIN + t * (theme::FONT_SCALE_MAX - theme::FONT_SCALE_MIN),
+        );
         // the panes read font_scale() at render time — nudge them to repaint now
         if let Some(tab) = self.tabs.get(self.active) {
             let mut leaves = vec![];
@@ -1513,7 +1547,10 @@ impl Workspace {
                     .unwrap_or_else(|| hit.display.clone()),
                 t,
             ),
-            Err(e) => (format!("{} (error)", hit.display), format!("could not read:\n{e}")),
+            Err(e) => (
+                format!("{} (error)", hit.display),
+                format!("could not read:\n{e}"),
+            ),
         };
         // auto-name the tab after the file it now holds (≤ 40 chars)
         let tab_name = truncate_label(&label, 40);
@@ -1534,14 +1571,23 @@ impl Workspace {
         if let Some(tab) = self.tabs.get(self.active) {
             tab.root.leaves(&mut leaves);
         }
-        if let Some(p) = leaves.iter().find(|p| p.entity_id() == fs.target).or(leaves.first()) {
+        if let Some(p) = leaves
+            .iter()
+            .find(|p| p.entity_id() == fs.target)
+            .or(leaves.first())
+        {
             window.focus(&p.focus_handle(cx), cx);
         }
         cx.notify();
     }
 
     /// Keystrokes while the finder is open. Returns true if it consumed the key.
-    fn finder_key(&mut self, ks: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn finder_key(
+        &mut self,
+        ks: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.finder.is_none() {
             return false;
         }
@@ -1954,16 +2000,13 @@ fn finder_overlay(ui: &FinderState, th: &theme::Theme, cx: &mut Context<Workspac
         .border_1()
         .border_color(th.frame_border.alpha(0.8))
         .bg(darken(th.bg, 0.75))
-        .shadow(
-            vec![BoxShadow {
-                color: th.accent.alpha(0.18 * th.glow),
-                offset: point(px(0.), px(4.)),
-                blur_radius: px(24.),
-                spread_radius: px(1.),
-                inset: false,
-            }]
-            .into(),
-        )
+        .shadow(vec![BoxShadow {
+            color: th.accent.alpha(0.18 * th.glow),
+            offset: point(px(0.), px(4.)),
+            blur_radius: px(24.),
+            spread_radius: px(1.),
+            inset: false,
+        }])
         .child(query_row)
         .child(list)
         .child(
@@ -1974,7 +2017,9 @@ fn finder_overlay(ui: &FinderState, th: &theme::Theme, cx: &mut Context<Workspac
                 .border_color(th.frame_border.alpha(0.3))
                 .text_size(px(10.))
                 .text_color(th.frame_faint.alpha(0.6))
-                .child(SharedString::from(format!("{status} · ↑↓ select · ⏎ open · esc cancel"))),
+                .child(SharedString::from(format!(
+                    "{status} · ↑↓ select · ⏎ open · esc cancel"
+                ))),
         );
 
     // dim scrim over the pane + top-centered panel
@@ -2048,16 +2093,13 @@ fn confirm_overlay(
                 .border_2()
                 .border_color(th.accent)
                 .bg(darken(th.bg, 0.7))
-                .shadow(
-                    vec![BoxShadow {
-                        color: th.accent.alpha(0.35),
-                        offset: point(px(0.), px(6.)),
-                        blur_radius: px(34.),
-                        spread_radius: px(2.),
-                        inset: false,
-                    }]
-                    .into(),
-                )
+                .shadow(vec![BoxShadow {
+                    color: th.accent.alpha(0.35),
+                    offset: point(px(0.), px(6.)),
+                    blur_radius: px(34.),
+                    spread_radius: px(2.),
+                    inset: false,
+                }])
                 .p(px(18.))
                 .flex()
                 .flex_col()
@@ -2118,15 +2160,13 @@ fn confirm_overlay(
                                 }),
                             ),
                         )
-                        .child(
-                            Workspace::bezel_btn(th, "Cancel", false).on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    ws.confirm_cancel(cx);
-                                }),
-                            ),
-                        ),
+                        .child(Workspace::bezel_btn(th, "Cancel", false).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.confirm_cancel(cx);
+                            }),
+                        )),
                 ),
         )
 }
@@ -2168,7 +2208,12 @@ fn theme_icon_btn(th: &theme::Theme, glyph: &str, caption: &str, active: bool) -
 
 /// One SEED-COLOUR swatch. `None` = the theme's own colours (rainbow chip).
 fn seed_swatch(color: Option<Hsla>, active: bool) -> gpui::Div {
-    let b = div().w(px(20.)).h(px(20.)).rounded_full().cursor_pointer().border_2();
+    let b = div()
+        .w(px(20.))
+        .h(px(20.))
+        .rounded_full()
+        .cursor_pointer()
+        .border_2();
     let b = match color {
         Some(c) => b.bg(c),
         None => b.bg(linear_gradient(
@@ -2262,16 +2307,13 @@ fn theme_menu_overlay(
         .border_1()
         .border_color(th.accent.alpha(0.55))
         .bg(darken(th.frame_bg, 0.6))
-        .shadow(
-            vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.6),
-                offset: point(px(4.), px(6.)),
-                blur_radius: px(18.),
-                spread_radius: px(0.),
-                inset: false,
-            }]
-            .into(),
-        )
+        .shadow(vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.6),
+            offset: point(px(4.), px(6.)),
+            blur_radius: px(18.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
         .flex()
         .flex_col()
         .gap_2()
@@ -2282,7 +2324,11 @@ fn theme_menu_overlay(
             MouseButton::Left,
             cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
         )
-        .child(label(if is_pane { "THEME — THIS PANE" } else { "THEME — OUTER" }))
+        .child(label(if is_pane {
+            "THEME — THIS PANE"
+        } else {
+            "THEME — OUTER"
+        }))
         .child(theme_row)
         .child(label("SEED COLOUR"))
         .child(seed_row);
@@ -2309,6 +2355,7 @@ fn theme_menu_overlay(
         .child(panel)
 }
 
+#[allow(clippy::too_many_arguments)] // a render fn threading the full draw context
 fn render_node(
     node: &Node,
     th: &theme::Theme,
@@ -2397,7 +2444,11 @@ fn render_node(
                                 .cursor_pointer()
                                 .px_1()
                                 .rounded_sm()
-                                .text_color(if commenting { pth.accent } else { pth.frame_faint })
+                                .text_color(if commenting {
+                                    pth.accent
+                                } else {
+                                    pth.frame_faint
+                                })
                                 .hover(|s| s.text_color(pth.accent))
                                 .child("▣ comment")
                                 .on_mouse_down(
@@ -2421,7 +2472,8 @@ fn render_node(
                                     MouseButton::Left,
                                     cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        e_browser.update(cx, |pane, cx| pane.toggle_comment_browser(cx));
+                                        e_browser
+                                            .update(cx, |pane, cx| pane.toggle_comment_browser(cx));
                                     }),
                                 ),
                         )
@@ -2486,9 +2538,7 @@ fn render_node(
                                 .cursor_pointer()
                                 .text_size(px(13.))
                                 .text_color(pth.frame_faint.alpha(0.8))
-                                .hover(|s| {
-                                    s.bg(hsla(0.0, 0.75, 0.55, 0.9)).text_color(white())
-                                })
+                                .hover(|s| s.bg(hsla(0.0, 0.75, 0.55, 0.9)).text_color(white()))
                                 .child("✕")
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -2516,16 +2566,15 @@ fn render_node(
                 })
                 // edge phosphor glow — wraps all 4 sides (offset 0 inset radiates
                 // inward uniformly). pth.glow is 0 outside glow themes.
-                .shadow(
-                    vec![BoxShadow {
-                        color: pth.accent.alpha((if is_focused { 0.22 } else { 0.11 }) * pth.glow),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(11.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    }]
-                    .into(),
-                )
+                .shadow(vec![BoxShadow {
+                    color: pth
+                        .accent
+                        .alpha((if is_focused { 0.22 } else { 0.11 }) * pth.glow),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(11.),
+                    spread_radius: px(0.),
+                    inset: true,
+                }])
                 .flex()
                 .flex_col()
                 .child(header)
@@ -2544,11 +2593,9 @@ fn render_node(
                         }
                     },
                 ))
-                .on_drop::<DraggedPane>(cx.listener(
-                    move |ws, d: &DraggedPane, window, cx| {
-                        ws.accept_pane_drop(d, pane_id, window, cx);
-                    },
-                ));
+                .on_drop::<DraggedPane>(cx.listener(move |ws, d: &DraggedPane, window, cx| {
+                    ws.accept_pane_drop(d, pane_id, window, cx);
+                }));
 
             // drop-zone overlay (only on the pane currently hovered)
             if let Some((tid, zone)) = drop_target {
@@ -2592,21 +2639,30 @@ fn render_node(
                 SplitDir::Col => handle.h(px(7.)).w_full().cursor_row_resize(),
             };
 
-            let first = div()
-                .min_w_0()
-                .min_h_0()
-                .flex()
-                .child(render_node(a, th, focused, dragging, registry, finder, drop_target, cx));
+            let first = div().min_w_0().min_h_0().flex().child(render_node(
+                a,
+                th,
+                focused,
+                dragging,
+                registry,
+                finder,
+                drop_target,
+                cx,
+            ));
             let first = match dir {
                 SplitDir::Row => first.h_full().w(gpui::relative(*ratio)),
                 SplitDir::Col => first.w_full().h(gpui::relative(*ratio)),
             };
-            let second = div()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .flex()
-                .child(render_node(b, th, focused, dragging, registry, finder, drop_target, cx));
+            let second = div().flex_1().min_w_0().min_h_0().flex().child(render_node(
+                b,
+                th,
+                focused,
+                dragging,
+                registry,
+                finder,
+                drop_target,
+                cx,
+            ));
 
             let ratio_now = *ratio;
             let store2 = registry.clone();
@@ -2660,8 +2716,8 @@ impl Render for Workspace {
         }
         self.reap(window, cx);
         warp::begin_frame(); // visible panes re-register their tube rects below
-        // flatten the glass while an overlay is up so its hit-testing is honest
-        // (the warp is a post-process; a panel over a bent tube would bow with it)
+                             // flatten the glass while an overlay is up so its hit-testing is honest
+                             // (the warp is a post-process; a panel over a bent tube would bow with it)
         warp::set_suppressed(self.theme_menu.is_some() || self.confirm_close.is_some());
         let th = theme::theme(cx);
         let bezel = darken(th.frame_bg, 0.85);
@@ -2735,9 +2791,9 @@ impl Render for Workspace {
                     .drag_over::<DraggedPane>(move |s, _d: &DraggedPane, _w, _cx| {
                         s.border_color(tab_accent)
                     })
-                    .on_drop::<DraggedPane>(cx.listener(
-                        move |ws, d: &DraggedPane, window, cx| ws.move_pane_to_tab(d, i, window, cx),
-                    ))
+                    .on_drop::<DraggedPane>(cx.listener(move |ws, d: &DraggedPane, window, cx| {
+                        ws.move_pane_to_tab(d, i, window, cx)
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -2755,12 +2811,7 @@ impl Render for Workspace {
                     )
                     // unsaved-edits dot (notebooks / modified files)
                     .when(tab_dirty, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(9.))
-                                .text_color(dot_color)
-                                .child("●"),
-                        )
+                        d.child(div().text_size(px(9.)).text_color(dot_color).child("●"))
                     })
                     // the tab's big, distinct ✕ — a circular danger badge that
                     // lights red on hover. stop_propagation so it never activates.
@@ -2801,9 +2852,9 @@ impl Render for Workspace {
                 .drag_over::<DraggedPane>(move |s, _d: &DraggedPane, _w, _cx| {
                     s.border_color(plus_accent)
                 })
-                .on_drop::<DraggedPane>(cx.listener(
-                    |ws, d: &DraggedPane, window, cx| ws.new_tab_with(d, window, cx),
-                ))
+                .on_drop::<DraggedPane>(
+                    cx.listener(|ws, d: &DraggedPane, window, cx| ws.new_tab_with(d, window, cx)),
+                )
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, window, cx| ws.new_tab(window, cx)),
@@ -2823,7 +2874,12 @@ impl Render for Workspace {
             .flex_row()
             .items_center()
             .gap_1()
-            .child(div().text_size(px(8.5)).text_color(th.frame_faint).child("A"))
+            .child(
+                div()
+                    .text_size(px(8.5))
+                    .text_color(th.frame_faint)
+                    .child("A"),
+            )
             .child(
                 div()
                     .id("font-track")
@@ -2832,15 +2888,17 @@ impl Render for Workspace {
                     .h(px(12.))
                     .cursor_pointer()
                     // capture the painted bounds so a drag maps x → scale
-                    .child(div().absolute().inset_0().child(
-                        canvas(
-                            move |bounds, _, _| {
-                                *font_store.lock().unwrap() = Some(bounds);
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .size_full(),
-                    ))
+                    .child(
+                        div().absolute().inset_0().child(
+                            canvas(
+                                move |bounds, _, _| {
+                                    *font_store.lock().unwrap() = Some(bounds);
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                    )
                     // groove
                     .child(
                         div()
@@ -2884,12 +2942,20 @@ impl Render for Workspace {
                         }),
                     ),
             )
-            .child(div().text_size(px(13.)).text_color(th.frame_faint).child("A"))
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(th.frame_faint)
+                    .child("A"),
+            )
             .child(
                 div()
                     .text_size(px(9.))
                     .text_color(th.accent)
-                    .child(SharedString::from(format!("{}%", (scale * 100.).round() as i32))),
+                    .child(SharedString::from(format!(
+                        "{}%",
+                        (scale * 100.).round() as i32
+                    ))),
             );
 
         let bezel_top = div()
@@ -2909,7 +2975,11 @@ impl Render for Workspace {
                     .items_center()
                     .gap_2()
                     .child(div().text_color(th.accent).child("▸ MARKDOWN-DELIGHT"))
-                    .child(div().text_color(th.frame_faint.alpha(0.6)).child("// EDITOR"))
+                    .child(
+                        div()
+                            .text_color(th.frame_faint.alpha(0.6))
+                            .child("// EDITOR"),
+                    )
                     .child(Self::bezel_btn(&th, "⌕ open", false).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, window, cx| {
@@ -2960,7 +3030,10 @@ impl Render for Workspace {
             .px_3()
             .text_size(px(10.5))
             .text_color(th.frame_faint.alpha(0.7))
-            .child(SharedString::from(format!("{} · {}", th.name, focused_title)))
+            .child(SharedString::from(format!(
+                "{} · {}",
+                th.name, focused_title
+            )))
             .child(
                 div()
                     .flex()
@@ -2989,20 +3062,16 @@ impl Render for Workspace {
         }
         // re-borrow tab after the &mut self refresh above
         let tab = &self.tabs[self.active];
-        let pane_area = div()
-            .size_full()
-            .flex()
-            .p(px(3.))
-            .child(render_node(
-                &tab.root,
-                &th,
-                focused_id,
-                self.drag_split,
-                &self.split_bounds,
-                self.finder.as_ref(),
-                self.drop_target,
-                cx,
-            ));
+        let pane_area = div().size_full().flex().p(px(3.)).child(render_node(
+            &tab.root,
+            &th,
+            focused_id,
+            self.drag_split,
+            &self.split_bounds,
+            self.finder.as_ref(),
+            self.drop_target,
+            cx,
+        ));
 
         let screen_well = div()
             .flex_1()
@@ -3042,7 +3111,16 @@ impl Render for Workspace {
             let cur = self.menu_choice(cx);
             let themes = theme::registry_list(cx);
             let at = self.menu_at;
-            theme_menu_overlay(is_pane, cur, at, &tray_th, &themes, has_override, window, cx)
+            theme_menu_overlay(
+                is_pane,
+                cur,
+                at,
+                &tray_th,
+                &themes,
+                has_override,
+                window,
+                cx,
+            )
         });
 
         div()
@@ -3072,39 +3150,34 @@ impl Render for Workspace {
                     ))
                     .border_2()
                     .border_color(th.frame_border.alpha(0.45))
-                    .shadow(
-                        vec![
-                            BoxShadow {
-                                color: white().alpha(0.14),
-                                offset: point(px(1.), px(1.)),
-                                blur_radius: px(0.),
-                                spread_radius: px(0.),
-                                inset: true,
-                            },
-                            BoxShadow {
-                                color: hsla(0., 0., 0., 0.5),
-                                offset: point(px(-2.), px(-2.)),
-                                blur_radius: px(3.),
-                                spread_radius: px(0.),
-                                inset: true,
-                            },
-                            BoxShadow {
-                                color: th.accent.alpha(0.10 * th.glow),
-                                offset: point(px(0.), px(0.)),
-                                blur_radius: px(30.),
-                                spread_radius: px(2.),
-                                inset: false,
-                            },
-                        ]
-                        .into(),
-                    )
+                    .shadow(vec![
+                        BoxShadow {
+                            color: white().alpha(0.14),
+                            offset: point(px(1.), px(1.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(0.),
+                            inset: true,
+                        },
+                        BoxShadow {
+                            color: hsla(0., 0., 0., 0.5),
+                            offset: point(px(-2.), px(-2.)),
+                            blur_radius: px(3.),
+                            spread_radius: px(0.),
+                            inset: true,
+                        },
+                        BoxShadow {
+                            color: th.accent.alpha(0.10 * th.glow),
+                            offset: point(px(0.), px(0.)),
+                            blur_radius: px(30.),
+                            spread_radius: px(2.),
+                            inset: false,
+                        },
+                    ])
                     .child(bezel_top)
                     .child(screen_well)
                     .child(bezel_bottom),
             )
-            .children(
-                confirm.map(|(req, cth, names)| confirm_overlay(req, &cth, &names, cx)),
-            )
+            .children(confirm.map(|(req, cth, names)| confirm_overlay(req, &cth, &names, cx)))
             .children(theme_tray)
     }
 }
@@ -3134,7 +3207,10 @@ fn load() -> (String, Option<PathBuf>, String) {
 /// where the cold-start seconds go (window create vs. first GPU frame).
 fn stamp(t0: Instant, what: &str) {
     if std::env::var_os("MD_TIMING").is_some() {
-        eprintln!("[timing] {:>7.0}ms  {what}", t0.elapsed().as_secs_f64() * 1000.);
+        eprintln!(
+            "[timing] {:>7.0}ms  {what}",
+            t0.elapsed().as_secs_f64() * 1000.
+        );
     }
 }
 

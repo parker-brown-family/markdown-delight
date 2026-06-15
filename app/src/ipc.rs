@@ -132,7 +132,10 @@ mod tests {
     #[test]
     fn decode_skips_blank_lines() {
         assert_eq!(decode(b"\n\n"), Vec::<PathBuf>::new());
-        assert_eq!(decode(b"/x.md\n\n/y.md\n"), vec![PathBuf::from("/x.md"), PathBuf::from("/y.md")]);
+        assert_eq!(
+            decode(b"/x.md\n\n/y.md\n"),
+            vec![PathBuf::from("/x.md"), PathBuf::from("/y.md")]
+        );
     }
 
     #[test]

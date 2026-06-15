@@ -7,10 +7,10 @@
 //! burn the snappiness pillar. NO webview — native elements, hacker palette.
 
 use comrak::nodes::{AstNode, ListType, NodeValue};
-use comrak::{Arena, Options, parse_document};
+use comrak::{parse_document, Arena, Options};
 use gpui::{
-    AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
-    StyledText, UnderlineStyle, div, prelude::*, px, rgb,
+    div, prelude::*, px, rgb, AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString,
+    StrikethroughStyle, StyledText, UnderlineStyle,
 };
 use std::ops::Range;
 
@@ -25,9 +25,12 @@ const MUTED: u32 = 0x3f9963;
 
 /* ================= owned document model (parse once) ================= */
 
+/// A run of styled inline text: a byte range and the style to paint it with.
+pub type Runs = Vec<(Range<usize>, HighlightStyle)>;
+
 pub struct Inline {
     text: SharedString,
-    runs: Vec<(Range<usize>, HighlightStyle)>,
+    runs: Runs,
 }
 
 pub enum Block {
@@ -61,7 +64,11 @@ pub fn parse_with_meta(text: &str) -> (Vec<Block>, Vec<crate::comments::BlockMet
         .iter()
         .map(|b| {
             let plain = block_plain(b);
-            crate::comments::BlockMeta { fp: crate::comments::fingerprint(&plain), plain, src: 0..0 }
+            crate::comments::BlockMeta {
+                fp: crate::comments::fingerprint(&plain),
+                plain,
+                src: 0..0,
+            }
         })
         .collect();
     (blocks, meta)
@@ -73,9 +80,11 @@ pub fn block_plain(block: &Block) -> String {
     match block {
         Block::Heading { inline, .. } => inline.text.to_string(),
         Block::Paragraph(inline) => inline.text.to_string(),
-        Block::Code(lines) | Block::Html(lines) => {
-            lines.iter().map(|l| l.as_ref()).collect::<Vec<_>>().join("\n")
-        }
+        Block::Code(lines) | Block::Html(lines) => lines
+            .iter()
+            .map(|l| l.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n"),
         Block::Quote(blocks) => blocks.iter().map(block_plain).collect::<Vec<_>>().join(" "),
         Block::Rule => "—".to_string(),
         Block::List(items) => items
@@ -89,7 +98,11 @@ pub fn block_plain(block: &Block) -> String {
         Block::Table(rows) => rows
             .iter()
             .map(|(_, cells)| {
-                cells.iter().map(|c| c.text.to_string()).collect::<Vec<_>>().join(" | ")
+                cells
+                    .iter()
+                    .map(|c| c.text.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
             })
             .collect::<Vec<_>>()
             .join("\n"),
@@ -152,27 +165,65 @@ fn collect_inline<'a>(
     };
     match &node.data.borrow().value {
         NodeValue::Text(t) => push(t, flags),
-        NodeValue::Code(c) => push(&c.literal, InlineFlags { code: true, ..flags }),
+        NodeValue::Code(c) => push(
+            &c.literal,
+            InlineFlags {
+                code: true,
+                ..flags
+            },
+        ),
         NodeValue::SoftBreak | NodeValue::LineBreak => push(" ", flags),
         NodeValue::HtmlInline(h) => push(h, flags),
         NodeValue::Strong => {
             for c in node.children() {
-                collect_inline(c, InlineFlags { bold: true, ..flags }, out, runs);
+                collect_inline(
+                    c,
+                    InlineFlags {
+                        bold: true,
+                        ..flags
+                    },
+                    out,
+                    runs,
+                );
             }
         }
         NodeValue::Emph => {
             for c in node.children() {
-                collect_inline(c, InlineFlags { italic: true, ..flags }, out, runs);
+                collect_inline(
+                    c,
+                    InlineFlags {
+                        italic: true,
+                        ..flags
+                    },
+                    out,
+                    runs,
+                );
             }
         }
         NodeValue::Strikethrough => {
             for c in node.children() {
-                collect_inline(c, InlineFlags { strike: true, ..flags }, out, runs);
+                collect_inline(
+                    c,
+                    InlineFlags {
+                        strike: true,
+                        ..flags
+                    },
+                    out,
+                    runs,
+                );
             }
         }
         NodeValue::Link(_) | NodeValue::Image(_) => {
             for c in node.children() {
-                collect_inline(c, InlineFlags { link: true, ..flags }, out, runs);
+                collect_inline(
+                    c,
+                    InlineFlags {
+                        link: true,
+                        ..flags
+                    },
+                    out,
+                    runs,
+                );
             }
         }
         _ => {
@@ -192,14 +243,23 @@ fn inline_of<'a>(node: &'a AstNode<'a>) -> Inline {
     if text.is_empty() {
         text.push(' ');
     }
-    Inline { text: text.into(), runs }
+    Inline {
+        text: text.into(),
+        runs,
+    }
 }
 
 fn lines_of(literal: &str) -> Vec<SharedString> {
     literal
         .trim_end_matches('\n')
         .split('\n')
-        .map(|l| SharedString::from(if l.is_empty() { " ".to_string() } else { l.to_string() }))
+        .map(|l| {
+            SharedString::from(if l.is_empty() {
+                " ".to_string()
+            } else {
+                l.to_string()
+            })
+        })
         .collect()
 }
 
@@ -207,7 +267,10 @@ fn lines_of(literal: &str) -> Vec<SharedString> {
 
 fn to_block<'a>(node: &'a AstNode<'a>) -> Option<Block> {
     Some(match &node.data.borrow().value {
-        NodeValue::Heading(h) => Block::Heading { level: h.level, inline: inline_of(node) },
+        NodeValue::Heading(h) => Block::Heading {
+            level: h.level,
+            inline: inline_of(node),
+        },
         NodeValue::Paragraph => Block::Paragraph(inline_of(node)),
         NodeValue::CodeBlock(cb) => Block::Code(lines_of(&cb.literal)),
         NodeValue::BlockQuote => Block::Quote(node.children().filter_map(to_block).collect()),
@@ -228,7 +291,10 @@ fn to_block<'a>(node: &'a AstNode<'a>) -> Option<Block> {
                 node.children()
                     .map(|item| {
                         let marker = item_marker(item, ordered, &mut n);
-                        (SharedString::from(marker), item.children().filter_map(to_block).collect())
+                        (
+                            SharedString::from(marker),
+                            item.children().filter_map(to_block).collect(),
+                        )
                     })
                     .collect(),
             )
@@ -239,7 +305,11 @@ fn to_block<'a>(node: &'a AstNode<'a>) -> Option<Block> {
 
 fn item_marker<'a>(item: &'a AstNode<'a>, ordered: bool, n: &mut usize) -> String {
     if let NodeValue::TaskItem(t) = &item.data.borrow().value {
-        return if t.symbol.is_some() { "☑".into() } else { "☐".into() };
+        return if t.symbol.is_some() {
+            "☑".into()
+        } else {
+            "☐".into()
+        };
     }
     if ordered {
         let m = format!("{n}.");
@@ -258,7 +328,7 @@ pub fn document(blocks: &[Block]) -> AnyElement {
         .flex_col()
         .gap_2()
         .text_color(rgb(TEXT))
-        .children(blocks.iter().map(|b| element(b)))
+        .children(blocks.iter().map(element))
         .into_any_element()
 }
 
@@ -272,7 +342,7 @@ pub fn block_element(block: &Block) -> AnyElement {
 /// the `StyledText` itself (capturing its layout for drag-selection and merging
 /// in comment-span highlights). `None` for non-paragraph blocks, which stay
 /// whole-block-commentable via `block_element`.
-pub fn paragraph_text(block: &Block) -> Option<(SharedString, Vec<(Range<usize>, HighlightStyle)>)> {
+pub fn paragraph_text(block: &Block) -> Option<(SharedString, Runs)> {
     match block {
         Block::Paragraph(inline) => Some((inline.text.clone(), inline.runs.clone())),
         _ => None,
@@ -301,7 +371,10 @@ fn element(block: &Block) -> AnyElement {
                 .text_color(rgb(ACCENT_STRONG))
                 .child(styled(inline));
             if *level <= 2 {
-                el.pb_1().border_b_1().border_color(rgb(FAINT)).into_any_element()
+                el.pb_1()
+                    .border_b_1()
+                    .border_color(rgb(FAINT))
+                    .into_any_element()
             } else {
                 el.into_any_element()
             }
@@ -374,9 +447,16 @@ fn element(block: &Block) -> AnyElement {
             .flex()
             .flex_col()
             .children(rows.iter().map(|(header, cells)| {
-                let mut r = div().flex().flex_row().border_b_1().border_color(rgb(FAINT));
+                let mut r = div()
+                    .flex()
+                    .flex_row()
+                    .border_b_1()
+                    .border_color(rgb(FAINT));
                 if *header {
-                    r = r.bg(rgb(SURFACE)).font_weight(FontWeight::BOLD).text_color(rgb(ACCENT_STRONG));
+                    r = r
+                        .bg(rgb(SURFACE))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(ACCENT_STRONG));
                 }
                 r.children(cells.iter().map(|cell| {
                     div()

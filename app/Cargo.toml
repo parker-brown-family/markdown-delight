@@ -5,6 +5,11 @@ edition = "2021"
 license = "MIT"
 description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app polished, themeable, settable as the default .md handler"
 
+# Single source of truth for the pinned Zed/gpui revision. scripts/prepare-gpui.sh
+# and CI read this to clone ../zed-upstream at the exact pin + apply td-crt-pass.
+[package.metadata.markdown-delight]
+zed_rev = "abbe85a3321bf6cb7f5b241e623d9c2e16c29187"
+
 # gpui consumed from a pinned zed-upstream checkout (X11 · NVIDIA · wgpu renderer).
 # Apache-2.0; MIT-compatible. Pin: zed-industries/zed @
 #   abbe85a3321bf6cb7f5b241e623d9c2e16c29187

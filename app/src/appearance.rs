@@ -51,11 +51,19 @@ pub struct Grade {
 
 impl Default for Grade {
     fn default() -> Self {
-        Self { brightness: 0.5, contrast: 0.5, saturation: 0.5, gamma: 0.5, text_scale: 1.0 }
+        Self {
+            brightness: 0.5,
+            contrast: 0.5,
+            saturation: 0.5,
+            gamma: 0.5,
+            text_scale: 1.0,
+        }
     }
 }
 
 /// The five tunable channels of a [`Grade`], for slider UIs.
+// Wired by the monitor-OSD tray (next increment); the model + compose are live.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GradeKey {
     Brightness,
@@ -65,6 +73,7 @@ pub enum GradeKey {
     TextScale,
 }
 
+#[allow(dead_code)] // consumed by the OSD tray (next increment)
 impl GradeKey {
     pub const ALL: [GradeKey; 5] = [
         GradeKey::Brightness,
@@ -103,6 +112,7 @@ impl Grade {
             && near(self.text_scale, 1.0)
     }
 
+    #[allow(dead_code)] // OSD tray reads channel values for slider positions
     pub fn get(&self, key: GradeKey) -> f32 {
         match key {
             GradeKey::Brightness => self.brightness,
@@ -113,6 +123,7 @@ impl Grade {
         }
     }
 
+    #[allow(dead_code)] // OSD tray writes channel values from slider drags
     pub fn set(&mut self, key: GradeKey, v: f32) {
         let (min, max, _) = key.range();
         let v = v.clamp(min, max);
@@ -140,7 +151,12 @@ impl Grade {
         l = (l - 0.5) * (self.contrast / 0.5) + 0.5;
         // master brightness
         l *= self.brightness / 0.5;
-        Hsla { h: c.h, s, l: l.clamp(0.0, 1.0), a: c.a }
+        Hsla {
+            h: c.h,
+            s,
+            l: l.clamp(0.0, 1.0),
+            a: c.a,
+        }
     }
 }
 
@@ -156,7 +172,10 @@ pub struct Colour {
 
 impl Colour {
     pub fn new(id: impl Into<String>) -> Self {
-        Self { id: id.into(), seed: None }
+        Self {
+            id: id.into(),
+            seed: None,
+        }
     }
     pub fn seed_hsla(&self) -> Option<Hsla> {
         self.seed.as_deref().and_then(theme::parse_hex)
@@ -189,7 +208,10 @@ pub struct Curve {
 
 impl Default for Curve {
     fn default() -> Self {
-        Self { on: true, amount: None }
+        Self {
+            on: true,
+            amount: None,
+        }
     }
 }
 
@@ -317,14 +339,17 @@ impl PaneAppearance {
         self.colour = Some(c);
         self.inherit_colour = false;
     }
+    #[allow(dead_code)] // wired by the TEXTURE row of the OSD tray (next increment)
     pub fn set_texture(&mut self, t: Texture) {
         self.texture = Some(t);
         self.inherit_texture = false;
     }
+    #[allow(dead_code)] // wired by the GRADE sliders of the OSD tray (next increment)
     pub fn set_grade(&mut self, g: Grade) {
         self.grade = Some(g);
         self.inherit_grade = false;
     }
+    #[allow(dead_code)] // wired by the CURVE toggle of the OSD tray (next increment)
     pub fn set_curve(&mut self, c: Curve) {
         self.curve = Some(c);
         self.inherit_curve = false;
@@ -400,24 +425,61 @@ mod tests {
     #[test]
     fn neutral_grade_is_identity() {
         let g = Grade::default();
-        let c = Hsla { h: 0.3, s: 0.6, l: 0.5, a: 1.0 };
+        let c = Hsla {
+            h: 0.3,
+            s: 0.6,
+            l: 0.5,
+            a: 1.0,
+        };
         assert_eq!(g.apply(c), c);
         assert!(g.is_neutral());
     }
 
     #[test]
     fn brightness_darkens_and_brightens() {
-        let c = Hsla { h: 0.3, s: 0.6, l: 0.5, a: 1.0 };
-        let dark = Grade { brightness: 0.25, ..Default::default() }.apply(c);
-        let bright = Grade { brightness: 0.75, ..Default::default() }.apply(c);
-        assert!(dark.l < c.l, "0.25 brightness darkens: {} !< {}", dark.l, c.l);
-        assert!(bright.l > c.l, "0.75 brightness brightens: {} !> {}", bright.l, c.l);
+        let c = Hsla {
+            h: 0.3,
+            s: 0.6,
+            l: 0.5,
+            a: 1.0,
+        };
+        let dark = Grade {
+            brightness: 0.25,
+            ..Default::default()
+        }
+        .apply(c);
+        let bright = Grade {
+            brightness: 0.75,
+            ..Default::default()
+        }
+        .apply(c);
+        assert!(
+            dark.l < c.l,
+            "0.25 brightness darkens: {} !< {}",
+            dark.l,
+            c.l
+        );
+        assert!(
+            bright.l > c.l,
+            "0.75 brightness brightens: {} !> {}",
+            bright.l,
+            c.l
+        );
     }
 
     #[test]
     fn saturation_channel_scales_s() {
-        let c = Hsla { h: 0.3, s: 0.5, l: 0.5, a: 1.0 };
-        let desat = Grade { saturation: 0.0, ..Default::default() }.apply(c);
+        let c = Hsla {
+            h: 0.3,
+            s: 0.5,
+            l: 0.5,
+            a: 1.0,
+        };
+        let desat = Grade {
+            saturation: 0.0,
+            ..Default::default()
+        }
+        .apply(c);
         assert!(desat.s < 1e-6, "saturation 0 → greyscale, got {}", desat.s);
     }
 
@@ -452,7 +514,10 @@ mod tests {
     fn groups_inherit_independently() {
         let mut p = PaneAppearance::default();
         // pin ONLY the grade; colour/texture/curve still follow outer
-        p.set_grade(Grade { brightness: 0.2, ..Default::default() });
+        p.set_grade(Grade {
+            brightness: 0.2,
+            ..Default::default()
+        });
         let mut o = outer();
         o.colour = Colour::new("paper"); // change outer colour
         let eff = p.effective(&o);
@@ -464,13 +529,21 @@ mod tests {
     #[test]
     fn follow_outer_toggle_is_non_destructive() {
         let mut p = PaneAppearance::default();
-        p.set_texture(Texture { id: Some("amber".into()) });
+        p.set_texture(Texture {
+            id: Some("amber".into()),
+        });
         assert!(!p.inherit_texture);
         // go back to inheriting — override stays retained, just hidden
         p.follow_outer();
         let eff = p.effective(&outer());
         assert!(eff.texture.id.is_none(), "now follows outer (no texture)");
-        assert_eq!(p.texture, Some(Texture { id: Some("amber".into()) }), "override retained");
+        assert_eq!(
+            p.texture,
+            Some(Texture {
+                id: Some("amber".into())
+            }),
+            "override retained"
+        );
         // re-pin: the same override returns
         p.inherit_texture = false;
         assert_eq!(p.effective(&outer()).texture.id.as_deref(), Some("amber"));
@@ -479,8 +552,14 @@ mod tests {
     #[test]
     fn pane_appearance_serde_roundtrip() {
         let mut p = PaneAppearance::default();
-        p.set_colour(Colour { id: "ice".into(), seed: Some("#2f6fdd".into()) });
-        p.set_curve(Curve { on: false, amount: None });
+        p.set_colour(Colour {
+            id: "ice".into(),
+            seed: Some("#2f6fdd".into()),
+        });
+        p.set_curve(Curve {
+            on: false,
+            amount: None,
+        });
         let json = serde_json::to_string(&p).unwrap();
         let back: PaneAppearance = serde_json::from_str(&json).unwrap();
         assert_eq!(p, back);

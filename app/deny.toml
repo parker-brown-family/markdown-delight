@@ -1,0 +1,71 @@
+# cargo-deny policy for markdown-delight.
+#
+# markdown-delight's own source is MIT. The pinned Zed/gpui dependency graph
+# links a few GPL-3.0-or-later crates into the *built binary* (so a redistributed
+# binary would be GPL-3.0 — this is a source-only repo, see THIRD-PARTY-NOTICES.md).
+# This policy gates against *new* copyleft creeping in while explicitly allowing
+# the known GPL crates from the vendored graph.
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "bzip2-1.0.6",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MITNFA",   # fmt2io (via comrak)
+    "MPL-2.0",
+    "NCSA",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+exceptions = [
+    { allow = ["Unicode-DFS-2016"], name = "finl_unicode" }, # via comrak
+    # GPL-3.0-or-later crates pulled in by the vendored Zed/gpui graph. Never
+    # redistribute a binary under MIT (see THIRD-PARTY-NOTICES.md).
+    { allow = ["GPL-3.0-or-later"], name = "zlog" },
+    { allow = ["GPL-3.0-or-later"], name = "ztracing" },
+    { allow = ["GPL-3.0-or-later"], name = "ztracing_macro" },
+]
+
+# gpui sub-crates that ship without an embedded license file but are Apache-2.0.
+[[licenses.clarify]]
+name = "gpui_util"
+expression = "Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+name = "gpui_shared_string"
+expression = "Apache-2.0"
+license-files = []
+
+[bans]
+# The Zed workspace pulls multiple versions of some crates; we never publish a
+# crate, so allow it. Wildcard path deps (gpui via path) are expected.
+multiple-versions = "allow"
+wildcards = "warn"
+allow-wildcard-paths = true
+
+[advisories]
+yanked = "warn"
+# Unmaintained advisories: only flag markdown-delight's own first-party deps;
+# the vendored Zed/gpui graph carries several (async-std, bincode, instant,
+# paste, yaml-rust, …) that are upstream's to fix.
+unmaintained = "workspace"
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/zed-industries/zed",
+    "https://github.com/zed-industries/wgpu.git",
+    "https://github.com/zed-industries/font-kit",
+    "https://github.com/zed-industries/xim-rs.git",
+]

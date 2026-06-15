@@ -17,8 +17,8 @@
 //! registers no tubes, so the pass is a no-op and the glass reads flat: what you
 //! see is what you click.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 /// One registered tube: (rect[x,y,w,h] physical px, glass glare, k1, k2).
 type Tube = ([f32; 4], f32, f32, f32);

@@ -1,0 +1,43 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Launch the app (or run the AppImage)
+        2. Open a .md file
+        3. Split a pane with ctrl+alt+r / enter comment mode with ctrl+shift+c
+        4. ...
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: How you ran it (AppImage or from source), distro, GPU + driver, X11 or Wayland, display scaling.
+      placeholder: "AppImage · Ubuntu 24.04 · AMD Mesa · Wayland · 100%"
+    validations:
+      required: true
+  - type: input
+    id: rev
+    attributes:
+      label: Version / commit
+      description: "Release tag (e.g. v0.2.0) or `git rev-parse --short HEAD`."
+    validations:
+      required: false
+  - type: checkboxes
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      options:
+        - label: "I can reproduce with a fresh config (delete `~/.config/markdown-delight/theme.toml` and `session.toml` to reset)"

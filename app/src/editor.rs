@@ -59,7 +59,11 @@ impl Editor {
     /// is no (or an empty) selection.
     pub fn selection(&self) -> Option<Range<usize>> {
         let a = self.anchor?;
-        let (s, e) = if a <= self.cursor { (a, self.cursor) } else { (self.cursor, a) };
+        let (s, e) = if a <= self.cursor {
+            (a, self.cursor)
+        } else {
+            (self.cursor, a)
+        };
         (s != e).then_some(s..e)
     }
 
@@ -334,5 +338,76 @@ impl Editor {
         fs::rename(&tmp, path)?;
         self.dirty = false;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shift_arrows_build_a_selection() {
+        let mut e = Editor::new("hello world");
+        assert!(e.selection().is_none());
+        e.right(true); // shift-right ×3 → select "hel"
+        e.right(true);
+        e.right(true);
+        assert_eq!(e.selection(), Some(0..3));
+        assert_eq!(e.selected_text().as_deref(), Some("hel"));
+    }
+
+    #[test]
+    fn plain_left_collapses_selection_to_its_start() {
+        let mut e = Editor::new("hello");
+        e.select_all();
+        assert_eq!(e.selection(), Some(0..5));
+        e.left(false); // plain Left over a selection → caret at left edge
+        assert!(e.selection().is_none());
+        assert_eq!(e.cursor, 0);
+    }
+
+    #[test]
+    fn typing_replaces_the_selection() {
+        let mut e = Editor::new("hello world");
+        e.select_all();
+        e.insert("hi"); // replaces the whole buffer
+        assert_eq!(e.text(), "hi");
+        assert!(e.selection().is_none());
+        assert!(e.dirty);
+    }
+
+    #[test]
+    fn word_motion_lands_on_word_starts() {
+        let mut e = Editor::new("the quick fox");
+        e.word_right(false);
+        assert_eq!(e.cursor, 4, "after 'the ' → start of 'quick'");
+        e.word_right(false);
+        assert_eq!(e.cursor, 10, "→ start of 'fox'");
+        e.word_left(false);
+        assert_eq!(e.cursor, 4, "back to start of 'quick'");
+    }
+
+    #[test]
+    fn shift_word_right_selects_a_word() {
+        let mut e = Editor::new("alpha beta");
+        e.word_right(true);
+        assert_eq!(e.selected_text().as_deref(), Some("alpha "));
+    }
+
+    #[test]
+    fn delete_word_left_removes_the_prior_word() {
+        let mut e = Editor::new("one two");
+        e.end(false); // caret after "two"
+        e.delete_word_left();
+        assert_eq!(e.text(), "one ");
+    }
+
+    #[test]
+    fn doc_start_end_jump_to_buffer_bounds() {
+        let mut e = Editor::new("a\nb\nc");
+        e.doc_end(false);
+        assert_eq!(e.cursor, e.rope.len_chars());
+        e.doc_start(true); // select to top
+        assert_eq!(e.selection(), Some(0..5));
     }
 }

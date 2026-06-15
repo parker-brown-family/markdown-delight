@@ -14,10 +14,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, BoxShadow, Bounds, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    canvas, div, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, white,
+    AnyElement, Bounds, BoxShadow, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     FontWeight, HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, ScrollHandle, SharedString, StyledText, TextLayout, Window, canvas, div,
-    hsla, linear_color_stop, linear_gradient, point, prelude::*, px, white,
+    MouseUpEvent, Pixels, ScrollHandle, SharedString, StyledText, TextLayout, Window,
 };
 
 use crate::{appearance, comment_ui, comments, crt, editor, render, theme, warp};
@@ -165,27 +165,24 @@ impl MdPane {
         // live preview: repaint when the shared doc changes
         let doc_sub = cx.observe(&doc, |_, _, cx| cx.notify());
         // fx clock — only notifies when something visibly moved
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(33))
-                    .await;
-                if this
-                    .update(cx, |pane: &mut MdPane, cx| {
-                        if pane.closed {
-                            return false;
-                        }
-                        let th = pane.effective_theme(cx);
-                        if pane.fx.tick(&th) {
-                            cx.notify();
-                        }
-                        true
-                    })
-                    .unwrap_or(false)
-                    == false
-                {
-                    break;
-                }
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(33))
+                .await;
+            if !this
+                .update(cx, |pane: &mut MdPane, cx| {
+                    if pane.closed {
+                        return false;
+                    }
+                    let th = pane.effective_theme(cx);
+                    if pane.fx.tick(&th) {
+                        cx.notify();
+                    }
+                    true
+                })
+                .unwrap_or(false)
+            {
+                break;
             }
         })
         .detach();
@@ -310,7 +307,8 @@ impl MdPane {
         self.doc.update(cx, |doc, cx| {
             let e = &mut doc.editor;
             let line = ((y / (LINE_H * sc)).floor().max(0.) as usize).min(e.line_count() - 1);
-            let col = ((x / (CHAR_W * sc)).round().max(0.) as usize).min(e.line(line).chars().count());
+            let col =
+                ((x / (CHAR_W * sc)).round().max(0.) as usize).min(e.line(line).chars().count());
             e.set_cursor(line, col, select);
             cx.notify();
         });
@@ -389,25 +387,49 @@ impl MdPane {
             let mut edited = false;
             match key {
                 "left" => {
-                    if by_unit { e.word_left(select) } else { e.left(select) }
+                    if by_unit {
+                        e.word_left(select)
+                    } else {
+                        e.left(select)
+                    }
                 }
                 "right" => {
-                    if by_unit { e.word_right(select) } else { e.right(select) }
+                    if by_unit {
+                        e.word_right(select)
+                    } else {
+                        e.right(select)
+                    }
                 }
                 "up" => e.up(select),
                 "down" => e.down(select),
                 "home" => {
-                    if by_unit { e.doc_start(select) } else { e.home(select) }
+                    if by_unit {
+                        e.doc_start(select)
+                    } else {
+                        e.home(select)
+                    }
                 }
                 "end" => {
-                    if by_unit { e.doc_end(select) } else { e.end(select) }
+                    if by_unit {
+                        e.doc_end(select)
+                    } else {
+                        e.end(select)
+                    }
                 }
                 "backspace" => {
-                    if by_unit { e.delete_word_left() } else { e.backspace() }
+                    if by_unit {
+                        e.delete_word_left()
+                    } else {
+                        e.backspace()
+                    }
                     edited = true;
                 }
                 "delete" => {
-                    if by_unit { e.delete_word_right() } else { e.delete() }
+                    if by_unit {
+                        e.delete_word_right()
+                    } else {
+                        e.delete()
+                    }
                     edited = true;
                 }
                 // text entry — never while ctrl is held (those are unbound chords)
@@ -563,11 +585,21 @@ impl MdPane {
         })
     }
 
-    fn begin_sel(&mut self, i: usize, pos: gpui::Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+    fn begin_sel(
+        &mut self,
+        i: usize,
+        pos: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.focus(&self.focus_handle, cx);
         match self.sel_index(i, pos, cx) {
             Some(ix) => {
-                self.sel = Some(Sel { block: i, anchor: ix, head: ix });
+                self.sel = Some(Sel {
+                    block: i,
+                    anchor: ix,
+                    head: ix,
+                });
                 self.sel_dragging = true;
                 cx.notify();
             }
@@ -580,7 +612,9 @@ impl MdPane {
         if !self.sel_dragging {
             return;
         }
-        let Some(block) = self.sel.as_ref().map(|s| s.block) else { return };
+        let Some(block) = self.sel.as_ref().map(|s| s.block) else {
+            return;
+        };
         if let Some(ix) = self.sel_index(block, pos, cx) {
             if let Some(sel) = self.sel.as_mut() {
                 sel.head = ix;
@@ -644,7 +678,9 @@ impl MdPane {
 
     /// Save the composer draft — a reply if the thread exists, else a new thread.
     fn commit_comment(&mut self, cx: &mut Context<Self>) {
-        let Some(ui) = self.comment_ui.as_ref() else { return };
+        let Some(ui) = self.comment_ui.as_ref() else {
+            return;
+        };
         let body = ui.composer.trim().to_string();
         if body.is_empty() {
             return;
@@ -678,7 +714,11 @@ impl MdPane {
             return;
         };
         self.doc.update(cx, |doc, _| {
-            let now = doc.comments.thread(&tid).map(|t| t.resolved).unwrap_or(false);
+            let now = doc
+                .comments
+                .thread(&tid)
+                .map(|t| t.resolved)
+                .unwrap_or(false);
             doc.comments.set_resolved(&tid, !now);
             doc.save_comments();
         });
@@ -801,7 +841,10 @@ impl MdPane {
         };
         if let Some(path) = path {
             match comments::export_sidecar(&path, &store) {
-                Ok(p) => eprintln!("[comments] exported → {} (git-ignored locally)", p.display()),
+                Ok(p) => eprintln!(
+                    "[comments] exported → {} (git-ignored locally)",
+                    p.display()
+                ),
                 Err(e) => eprintln!("[comments] export failed: {e}"),
             }
         } else {
@@ -860,7 +903,11 @@ impl MdPane {
                         for t in &threads {
                             if t.anchor.is_range() {
                                 if let Some(byte) = text.find(t.anchor.quote.as_str()) {
-                                    let kind = if t.resolved { SpanKind::Resolved } else { SpanKind::Range };
+                                    let kind = if t.resolved {
+                                        SpanKind::Resolved
+                                    } else {
+                                        SpanKind::Range
+                                    };
                                     spans.push((byte..byte + t.anchor.quote.len(), kind));
                                 }
                             }
@@ -938,7 +985,11 @@ impl MdPane {
                             .rounded_sm()
                             .text_size(px(9.))
                             .font_weight(FontWeight::BOLD)
-                            .bg(if r.resolved { th.frame_faint } else { th.accent })
+                            .bg(if r.resolved {
+                                th.frame_faint
+                            } else {
+                                th.accent
+                            })
                             .text_color(th.bg)
                             .child(SharedString::from(format!("● {}", r.badge))),
                     );
@@ -947,11 +998,20 @@ impl MdPane {
             })
             .collect();
 
-        div().flex().flex_col().gap_2().children(children).into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(children)
+            .into_any_element()
     }
 
     /// The floating non-CRT "device" panel for the open thread (if any).
-    fn render_comment_panel(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_comment_panel(
+        &self,
+        th: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let ui = self.comment_ui.as_ref()?;
         let quote = ui.anchor.quote.clone();
         let kind = ui.kind;
@@ -960,7 +1020,11 @@ impl MdPane {
         // owned snapshot of the thread's comments (drops the doc borrow)
         let (entries, resolved): (Vec<(String, String, String)>, bool) = {
             let doc = self.doc.read(cx);
-            match ui.thread_id.as_deref().and_then(|id| doc.comments.thread(id)) {
+            match ui
+                .thread_id
+                .as_deref()
+                .and_then(|id| doc.comments.thread(id))
+            {
                 Some(t) => (
                     t.comments
                         .iter()
@@ -1086,9 +1150,16 @@ impl MdPane {
         }
 
         // ── composer (keyboard-driven; see comment_panel_key) ──
-        let composer = self.comment_ui.as_ref().map(|u| u.composer.clone()).unwrap_or_default();
+        let composer = self
+            .comment_ui
+            .as_ref()
+            .map(|u| u.composer.clone())
+            .unwrap_or_default();
         let (comp_text, comp_color) = if composer.is_empty() {
-            ("Add a comment… (Ctrl+Enter to save)".to_string(), th.frame_faint)
+            (
+                "Add a comment… (Ctrl+Enter to save)".to_string(),
+                th.frame_faint,
+            )
         } else {
             (format!("{composer}▏"), white().alpha(0.92))
         };
@@ -1102,7 +1173,13 @@ impl MdPane {
         );
 
         // ── physical buttons ──
-        let mut buttons = div().flex().flex_row().items_center().justify_end().gap_2().p_3();
+        let mut buttons = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_end()
+            .gap_2()
+            .p_3();
         if has_thread {
             let label = if resolved { "Unresolve" } else { "Resolve" };
             buttons = buttons.child(comment_ui::device_button(th, label, false).on_mouse_down(
@@ -1111,12 +1188,10 @@ impl MdPane {
             ));
         }
         buttons = buttons
-            .child(
-                comment_ui::device_button(th, "Done", false).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|pane, _: &MouseDownEvent, _w, cx| pane.close_panel(cx)),
-                ),
-            )
+            .child(comment_ui::device_button(th, "Done", false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|pane, _: &MouseDownEvent, _w, cx| pane.close_panel(cx)),
+            ))
             .child(comment_ui::device_button(th, "Add", true).on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|pane, _: &MouseDownEvent, _w, cx| pane.commit_comment(cx)),
@@ -1131,7 +1206,10 @@ impl MdPane {
             .child(composer_box)
             .child(buttons)
             // clicking the panel must not fall through to the backdrop-close
-            .on_mouse_down(MouseButton::Left, cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()));
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
 
         let overlay = div()
             .absolute()
@@ -1183,7 +1261,11 @@ impl MdPane {
                         range: t.anchor.is_range(),
                         snippet,
                         count: t.comments.len(),
-                        body: t.comments.first().map(|c| c.body.clone()).unwrap_or_default(),
+                        body: t
+                            .comments
+                            .first()
+                            .map(|c| c.body.clone())
+                            .unwrap_or_default(),
                     }
                 })
                 .collect()
@@ -1204,7 +1286,12 @@ impl MdPane {
 
         list = list.child(comment_ui::kicker(format!("ACTIVE · {}", active.len())));
         if active.is_empty() {
-            list = list.child(div().italic().text_color(th.frame_faint).child("No comments yet."));
+            list = list.child(
+                div()
+                    .italic()
+                    .text_color(th.frame_faint)
+                    .child("No comments yet."),
+            );
         }
         for r in active {
             let id = r.id.clone();
@@ -1232,19 +1319,28 @@ impl MdPane {
                             .gap_2()
                             .items_baseline()
                             .text_size(px(9.5))
-                            .child(
-                                div()
-                                    .text_color(th.accent)
-                                    .child(if r.range { "⌇ span" } else { "▭ block" }),
-                            )
+                            .child(div().text_color(th.accent).child(if r.range {
+                                "⌇ span"
+                            } else {
+                                "▭ block"
+                            }))
                             .child(div().text_color(th.frame_faint).child(SharedString::from(
-                                format!("{} comment{}", r.count, if r.count == 1 { "" } else { "s" }),
+                                format!(
+                                    "{} comment{}",
+                                    r.count,
+                                    if r.count == 1 { "" } else { "s" }
+                                ),
                             )))
                             .when(r.resolved, |d| {
                                 d.child(div().text_color(th.frame_faint).child("· resolved"))
                             }),
                     )
-                    .child(div().text_color(white().alpha(0.55)).italic().child(SharedString::from(r.snippet)))
+                    .child(
+                        div()
+                            .text_color(white().alpha(0.55))
+                            .italic()
+                            .child(SharedString::from(r.snippet)),
+                    )
                     .child(div().text_color(th.text).child(SharedString::from(r.body))),
             );
         }
@@ -1278,12 +1374,14 @@ impl MdPane {
                                         .text_color(th.frame_faint)
                                         .child("orphaned"),
                                 )
-                                .child(comment_ui::device_button(th, "Delete", false).on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |pane, _: &MouseDownEvent, _w, cx| {
-                                        pane.delete_thread(id.clone(), cx)
-                                    }),
-                                )),
+                                .child(
+                                    comment_ui::device_button(th, "Delete", false).on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |pane, _: &MouseDownEvent, _w, cx| {
+                                            pane.delete_thread(id.clone(), cx)
+                                        }),
+                                    ),
+                                ),
                         )
                         .child(
                             div()
@@ -1291,7 +1389,11 @@ impl MdPane {
                                 .italic()
                                 .child(SharedString::from(r.snippet)),
                         )
-                        .child(div().text_color(white().alpha(0.6)).child(SharedString::from(r.body))),
+                        .child(
+                            div()
+                                .text_color(white().alpha(0.6))
+                                .child(SharedString::from(r.body)),
+                        ),
                 );
             }
         }
@@ -1331,10 +1433,14 @@ impl MdPane {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(comment_ui::device_button(th, "⤓ export", false).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|pane, _: &MouseDownEvent, _w, cx| pane.export_comments(cx)),
-                    ))
+                    .child(
+                        comment_ui::device_button(th, "⤓ export", false).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|pane, _: &MouseDownEvent, _w, cx| {
+                                pane.export_comments(cx)
+                            }),
+                        ),
+                    )
                     .child(
                         div()
                             .text_size(px(13.))
@@ -1357,7 +1463,10 @@ impl MdPane {
             .max_h(px(560.))
             .child(titlebar)
             .child(list)
-            .on_mouse_down(MouseButton::Left, cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()));
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
 
         let overlay = div()
             .absolute()
@@ -1517,7 +1626,7 @@ fn merge_runs(
         let mut hs = base
             .iter()
             .find(|(r, _)| r.start <= s && e <= r.end)
-            .map(|(_, h)| h.clone())
+            .map(|(_, h)| *h)
             .unwrap_or_default();
         // brightest span covering this segment (Active < Range < Resolved)
         let kind = spans
@@ -1597,22 +1706,18 @@ impl Render for MdPane {
             ))
             .border_r_1()
             .border_color(th.frame_border.alpha(0.3))
-            .child(
-                div()
-                    .mt(px(8. + rail_offset))
-                    .flex()
-                    .flex_col()
-                    .children((1..=rail_count.max(1)).map(|i| {
-                        div()
-                            .h(px(21. * sc))
-                            .pr_2()
-                            .text_size(px(10.5 * sc))
-                            .text_color(th.frame_faint.alpha(0.45))
-                            .flex()
-                            .justify_end()
-                            .child(SharedString::from(format!("{i}")))
-                    })),
-            );
+            .child(div().mt(px(8. + rail_offset)).flex().flex_col().children(
+                (1..=rail_count.max(1)).map(|i| {
+                    div()
+                        .h(px(21. * sc))
+                        .pr_2()
+                        .text_size(px(10.5 * sc))
+                        .text_color(th.frame_faint.alpha(0.45))
+                        .flex()
+                        .justify_end()
+                        .child(SharedString::from(format!("{i}")))
+                }),
+            ));
 
         let content: AnyElement = match self.mode {
             Mode::Source => div()

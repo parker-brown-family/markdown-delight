@@ -8,14 +8,14 @@
 //! so what you type matches what you see.
 
 use std::sync::{
-    Arc, RwLock,
     atomic::{AtomicBool, Ordering},
+    Arc, RwLock,
 };
 
 use ignore::WalkBuilder;
 use nucleo_matcher::{
-    Config, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
+    Config, Matcher, Utf32Str,
 };
 
 /// Runaway guard — a pathological disk won't balloon the index.
@@ -49,7 +49,10 @@ impl FileIndex {
                 .follow_links(false)
                 .filter_entry(|e| {
                     // .git/.cache etc. are hidden and already skipped
-                    !matches!(e.file_name().to_str(), Some("node_modules" | "target" | "snap"))
+                    !matches!(
+                        e.file_name().to_str(),
+                        Some("node_modules" | "target" | "snap")
+                    )
                 })
                 .build();
             let mut total = 0usize;
@@ -62,7 +65,9 @@ impl FileIndex {
                         .path()
                         .extension()
                         .and_then(|e| e.to_str())
-                        .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"));
+                        .is_some_and(|e| {
+                            e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")
+                        });
                 if !is_md {
                     continue;
                 }
@@ -195,13 +200,20 @@ mod tests {
     fn indices_point_at_matched_chars() {
         let hits = rank(&sample(), "/home/me", "todo", 10);
         let h = &hits[0];
-        let got: String = h.indices.iter().map(|&i| h.display.chars().nth(i as usize).unwrap()).collect();
+        let got: String = h
+            .indices
+            .iter()
+            .map(|&i| h.display.chars().nth(i as usize).unwrap())
+            .collect();
         assert_eq!(got.to_lowercase(), "todo");
     }
 
     #[test]
     fn to_abs_round_trips_home() {
-        assert_eq!(to_abs("/home/me", "~/notes/todo.md"), "/home/me/notes/todo.md");
+        assert_eq!(
+            to_abs("/home/me", "~/notes/todo.md"),
+            "/home/me/notes/todo.md"
+        );
         // a non-~ display (outside home) is returned unchanged
         assert_eq!(to_abs("/home/me", "/etc/x.md"), "/etc/x.md");
     }

@@ -10,7 +10,7 @@
 //! (listeners, state) lives in `pane.rs`.
 
 use gpui::{
-    BoxShadow, Div, FontWeight, SharedString, Styled, div, hsla, point, prelude::*, px, rgb, white,
+    div, hsla, point, prelude::*, px, rgb, white, BoxShadow, Div, FontWeight, SharedString, Styled,
 };
 
 use crate::theme;

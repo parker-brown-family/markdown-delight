@@ -8,12 +8,12 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::Arc,
     sync::atomic::{AtomicU32, Ordering},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
-use gpui::{App, Global, Hsla, rgb};
+use gpui::{rgb, App, Global, Hsla};
 use serde::Deserialize;
 
 pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
@@ -42,7 +42,10 @@ pub fn font_scale() -> f32 {
 }
 
 pub fn set_font_scale(v: f32) {
-    FONT_SCALE.store(v.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX).to_bits(), Ordering::Relaxed);
+    FONT_SCALE.store(
+        v.clamp(FONT_SCALE_MIN, FONT_SCALE_MAX).to_bits(),
+        Ordering::Relaxed,
+    );
 }
 
 #[derive(Deserialize)]
@@ -272,7 +275,8 @@ fn parse(source: &str) -> Result<Theme, String> {
     let file: ThemeFile = toml::from_str(source).map_err(|e| e.to_string())?;
     let c = &file.colors;
     let need = |s: &String, what: &str| hex(s).ok_or(format!("bad color for {what}: {s}"));
-    let opt = |s: &Option<String>, fallback: Hsla| s.as_ref().and_then(|v| hex(v)).unwrap_or(fallback);
+    let opt =
+        |s: &Option<String>, fallback: Hsla| s.as_ref().and_then(|v| hex(v)).unwrap_or(fallback);
     let accent = need(&c.accent, "accent")?;
     let surface = need(&c.surface, "surface")?;
     let name = file.name.unwrap_or_else(|| "unnamed".into());
@@ -356,7 +360,7 @@ pub fn init(cx: &mut App) {
                         Ok(theme) => {
                             apply_warp(&theme);
                             let theme = Arc::new(theme);
-                            let _ = cx.update(|cx| {
+                            cx.update(|cx| {
                                 cx.set_global(ActiveTheme(theme.clone()));
                                 // keep the registry's same-named slot live too,
                                 // so inheriting panes pick up the edit

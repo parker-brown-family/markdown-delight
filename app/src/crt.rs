@@ -8,8 +8,8 @@
 use std::time::Instant;
 
 use gpui::{
-    Bounds, BoxShadow, Hsla, canvas, div, fill, hsla, linear_color_stop, linear_gradient, point,
-    prelude::*, px, size,
+    canvas, div, fill, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    Bounds, BoxShadow, Hsla,
 };
 
 use crate::theme::Theme;
@@ -190,96 +190,95 @@ pub fn glass(th: &Theme, fx: &Fx) -> impl IntoElement {
             )
         })
         // scanlines + tracking band, one canvas
-        .when(std::env::var("MD_NOCANVAS").is_err(), |el| el.child(
-            canvas(
-                |_, _, _| (),
-                move |bounds: Bounds<gpui::Pixels>, _, window, _| {
-                    let top = f32::from(bounds.origin.y);
-                    let bottom = f32::from(bounds.bottom());
-                    let x = bounds.origin.x;
-                    let w = bounds.size.width;
-                    // scanlines: per 4px period — 1px black + 1px faint phosphor
-                    if scan_alpha > 0.001 {
-                        let dark = hsla(0., 0., 0., scan_alpha);
-                        let tint = accent.alpha(scan_alpha * 0.22);
-                        let mut y = top;
-                        while y < bottom {
-                            window.paint_quad(fill(
-                                Bounds::new(point(x, px(y)), size(w, px(1.))),
-                                dark,
-                            ));
-                            if y + 1. < bottom {
+        .when(std::env::var("MD_NOCANVAS").is_err(), |el| {
+            el.child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds: Bounds<gpui::Pixels>, _, window, _| {
+                        let top = f32::from(bounds.origin.y);
+                        let bottom = f32::from(bounds.bottom());
+                        let x = bounds.origin.x;
+                        let w = bounds.size.width;
+                        // scanlines: per 4px period — 1px black + 1px faint phosphor
+                        if scan_alpha > 0.001 {
+                            let dark = hsla(0., 0., 0., scan_alpha);
+                            let tint = accent.alpha(scan_alpha * 0.22);
+                            let mut y = top;
+                            while y < bottom {
                                 window.paint_quad(fill(
-                                    Bounds::new(point(x, px(y + 1.)), size(w, px(1.))),
-                                    tint,
+                                    Bounds::new(point(x, px(y)), size(w, px(1.))),
+                                    dark,
                                 ));
-                            }
-                            y += step;
-                        }
-                    }
-                    // tracking band (CSS: 160px, phosphor .048 / white .018 core)
-                    if let (Some(p), true) = (band, tracking > 0.001) {
-                        let span = (bottom - top) + BAND_H * 2.;
-                        let band_top = top - BAND_H + p * span;
-                        let rows = (BAND_H / 2.) as i32;
-                        for i in 0..rows {
-                            let y = band_top + (i as f32) * 2.;
-                            if y < top || y >= bottom {
-                                continue;
-                            }
-                            // triangle profile peaking at band center
-                            let d = 1. - ((i as f32 / rows as f32) - 0.5).abs() * 2.;
-                            let a = d * d * 0.05 * tracking;
-                            let core = d > 0.92;
-                            let color: Hsla = if core {
-                                hsla(0., 0., 1., 0.018 * tracking)
-                            } else {
-                                accent.alpha(a)
-                            };
-                            window.paint_quad(fill(
-                                Bounds::new(point(x, px(y)), size(w, px(1.))),
-                                color,
-                            ));
-                            // band-local darker scanline (every other row)
-                            if i % 2 == 0 {
-                                window.paint_quad(fill(
-                                    Bounds::new(point(x, px(y + 1.)), size(w, px(1.))),
-                                    hsla(0., 0., 0., 0.10 * tracking * d),
-                                ));
+                                if y + 1. < bottom {
+                                    window.paint_quad(fill(
+                                        Bounds::new(point(x, px(y + 1.)), size(w, px(1.))),
+                                        tint,
+                                    ));
+                                }
+                                y += step;
                             }
                         }
-                    }
-                },
+                        // tracking band (CSS: 160px, phosphor .048 / white .018 core)
+                        if let (Some(p), true) = (band, tracking > 0.001) {
+                            let span = (bottom - top) + BAND_H * 2.;
+                            let band_top = top - BAND_H + p * span;
+                            let rows = (BAND_H / 2.) as i32;
+                            for i in 0..rows {
+                                let y = band_top + (i as f32) * 2.;
+                                if y < top || y >= bottom {
+                                    continue;
+                                }
+                                // triangle profile peaking at band center
+                                let d = 1. - ((i as f32 / rows as f32) - 0.5).abs() * 2.;
+                                let a = d * d * 0.05 * tracking;
+                                let core = d > 0.92;
+                                let color: Hsla = if core {
+                                    hsla(0., 0., 1., 0.018 * tracking)
+                                } else {
+                                    accent.alpha(a)
+                                };
+                                window.paint_quad(fill(
+                                    Bounds::new(point(x, px(y)), size(w, px(1.))),
+                                    color,
+                                ));
+                                // band-local darker scanline (every other row)
+                                if i % 2 == 0 {
+                                    window.paint_quad(fill(
+                                        Bounds::new(point(x, px(y + 1.)), size(w, px(1.))),
+                                        hsla(0., 0., 0., 0.10 * tracking * d),
+                                    ));
+                                }
+                            }
+                        }
+                    },
+                )
+                .size_full(),
             )
-            .size_full(),
-        ))
+        })
         // curved-glass edge fade (CSS: inset 80px/.78 + 180px/.56 + phosphor 34px)
         .when(vignette > 0.001, |el| {
-            el.child(div().absolute().inset_0().rounded_lg().shadow(
-                vec![
-                    BoxShadow {
-                        color: hsla(0., 0., 0., 0.78 * vignette),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(80.),
-                        spread_radius: px(-12.),
-                        inset: true,
-                    },
-                    BoxShadow {
-                        color: hsla(0., 0., 0., 0.56 * vignette),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(180.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    },
-                    BoxShadow {
-                        color: accent.alpha(0.06 * vignette),
-                        offset: point(px(0.), px(0.)),
-                        blur_radius: px(34.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    },
-                ]
-                .into(),
-            ))
+            el.child(div().absolute().inset_0().rounded_lg().shadow(vec![
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.78 * vignette),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(80.),
+                    spread_radius: px(-12.),
+                    inset: true,
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.56 * vignette),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(180.),
+                    spread_radius: px(0.),
+                    inset: true,
+                },
+                BoxShadow {
+                    color: accent.alpha(0.06 * vignette),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(34.),
+                    spread_radius: px(0.),
+                    inset: true,
+                },
+            ]))
         })
 }

@@ -42,10 +42,20 @@ pub struct Anchor {
 
 impl Anchor {
     pub fn whole_block(fp: u64, ord: usize, quote: String) -> Self {
-        Self { block_fp: fp, block_ord: ord, range: None, quote }
+        Self {
+            block_fp: fp,
+            block_ord: ord,
+            range: None,
+            quote,
+        }
     }
     pub fn span(fp: u64, ord: usize, range: (usize, usize), quote: String) -> Self {
-        Self { block_fp: fp, block_ord: ord, range: Some(range), quote }
+        Self {
+            block_fp: fp,
+            block_ord: ord,
+            range: Some(range),
+            quote,
+        }
     }
     pub fn is_range(&self) -> bool {
         self.range.is_some()
@@ -139,7 +149,10 @@ pub fn default_author() -> String {
             }
         }
     }
-    std::env::var("USER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "anon".into())
+    std::env::var("USER")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "anon".into())
 }
 
 fn config_dir() -> PathBuf {
@@ -287,7 +300,12 @@ impl CommentStore {
         self.threads.push(Thread {
             id: tid.clone(),
             anchor,
-            comments: vec![Comment { id: cid, author, body, ts: now_millis() }],
+            comments: vec![Comment {
+                id: cid,
+                author,
+                body,
+                ts: now_millis(),
+            }],
             resolved: false,
             deprecated: false,
         });
@@ -297,7 +315,12 @@ impl CommentStore {
     pub fn reply(&mut self, thread_id: &str, author: String, body: String) {
         let cid = self.next_id("c");
         if let Some(t) = self.threads.iter_mut().find(|t| t.id == thread_id) {
-            t.comments.push(Comment { id: cid, author, body, ts: now_millis() });
+            t.comments.push(Comment {
+                id: cid,
+                author,
+                body,
+                ts: now_millis(),
+            });
         }
     }
 
@@ -318,7 +341,10 @@ impl CommentStore {
             let a = &mut thread.anchor;
             // candidates sharing the stored fingerprint, in document order
             let same_fp: Vec<&BlockMeta> = blocks.iter().filter(|b| b.fp == a.block_fp).collect();
-            let chosen = same_fp.get(a.block_ord).copied().or_else(|| same_fp.first().copied());
+            let chosen = same_fp
+                .get(a.block_ord)
+                .copied()
+                .or_else(|| same_fp.first().copied());
 
             if let Some(b) = chosen {
                 // fingerprint still present — for a range, confirm/relocate the quote
@@ -345,7 +371,10 @@ impl CommentStore {
                     .find_map(|(i, b)| relocate(&b.plain, q).map(|r| (i, r)))
                 {
                     a.block_fp = blocks[bi].fp;
-                    a.block_ord = blocks[..bi].iter().filter(|x| x.fp == blocks[bi].fp).count();
+                    a.block_ord = blocks[..bi]
+                        .iter()
+                        .filter(|x| x.fp == blocks[bi].fp)
+                        .count();
                     if a.range.is_some() {
                         a.range = Some(range);
                     }
@@ -374,7 +403,10 @@ mod tests {
 
     #[test]
     fn fingerprint_is_whitespace_stable_but_content_sensitive() {
-        assert_eq!(fingerprint("hello   world\n"), fingerprint("  hello world "));
+        assert_eq!(
+            fingerprint("hello   world\n"),
+            fingerprint("  hello world ")
+        );
         assert_ne!(fingerprint("hello world"), fingerprint("goodbye world"));
     }
 
@@ -414,7 +446,11 @@ mod tests {
         fs::write(&doc, "# hi").unwrap();
 
         let mut store = CommentStore::default();
-        store.new_thread(Anchor::whole_block(1, 0, "hi".into()), "t".into(), "nice".into());
+        store.new_thread(
+            Anchor::whole_block(1, 0, "hi".into()),
+            "t".into(),
+            "nice".into(),
+        );
 
         let side = export_sidecar(&doc, &store).unwrap();
         assert!(side.exists());
@@ -441,14 +477,26 @@ mod tests {
 
         // block still present (possibly reordered) → live
         let blocks = vec![
-            BlockMeta { fp: fingerprint("intro"), plain: "intro".into(), src: 0..5 },
-            BlockMeta { fp: fp_a, plain: "alpha line".into(), src: 6..16 },
+            BlockMeta {
+                fp: fingerprint("intro"),
+                plain: "intro".into(),
+                src: 0..5,
+            },
+            BlockMeta {
+                fp: fp_a,
+                plain: "alpha line".into(),
+                src: 6..16,
+            },
         ];
         store.reanchor(&blocks);
         assert!(!store.thread(&tid).unwrap().deprecated);
 
         // block text removed entirely → deprecated, but retained
-        let gone = vec![BlockMeta { fp: fingerprint("intro"), plain: "intro".into(), src: 0..5 }];
+        let gone = vec![BlockMeta {
+            fp: fingerprint("intro"),
+            plain: "intro".into(),
+            src: 0..5,
+        }];
         store.reanchor(&gone);
         assert!(store.thread(&tid).unwrap().deprecated);
         assert_eq!(store.threads.len(), 1);

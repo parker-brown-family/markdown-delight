@@ -7,7 +7,26 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Save As** (`Ctrl+Shift+S`) — a native "choose where to save" dialog
+  (`prompt_for_new_path`); writes there and adopts the path, renaming the tab.
+  `Ctrl+S` still saves in place (scratch buffers auto-name into the notebook dir).
+- **Ctrl+Alt+M scratch-pad hotkey** — a system keybinding
+  (`scripts/install-hotkey.sh`) that pops a fresh, blank scratch window; forwards
+  to the running instance in ~4ms (no GPU cold start), with no session restore.
+- **Display config** — per-pane appearance split into four independently-
+  inheriting groups (colour / texture / grade / curve) with a monitor-OSD tray;
+  default look is paper outer / hacker inner, remembered across sessions.
+- **Comment mode** — Google-Docs-style review (block + range comments, decay,
+  all-comments browser, copy-with-comments, export with a `.git/info/exclude`
+  guard).
+- **IDE text selection + clipboard** in the source editor.
+
+### Project
+
+- CI (fmt · clippy `-D warnings` · test · build · `cargo-deny`), `app/deny.toml`,
+  `scripts/prepare-gpui.sh` + `release-smoke.sh`.
 
 ## [0.1.0] — 2026-06-14
 

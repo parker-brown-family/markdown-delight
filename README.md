@@ -71,10 +71,11 @@ cargo build --release
 See **[`BUILDING.md`](BUILDING.md)** for the full step-by-step, system
 dependencies, and the directory layout the path-deps expect.
 
-Keys: `ctrl+e` source↔preview · `ctrl+s` save · `ctrl+shift+c` comment mode ·
-`ctrl+shift+a` all-comments browser · `ctrl+alt+r`/`ctrl+alt+d` split
-right/down · `ctrl+shift+t` new tab · `ctrl+pgup/pgdn` switch tab ·
-`alt+arrows` pane focus · `ctrl+w` close pane · right-click tab: rename.
+Keys: `ctrl+e` source↔preview · `ctrl+s` save · `ctrl+shift+s` save as… ·
+`ctrl+shift+c` comment mode · `ctrl+shift+a` all-comments browser ·
+`ctrl+alt+r`/`ctrl+alt+d` split right/down · `ctrl+shift+t` new tab ·
+`ctrl+pgup/pgdn` switch tab · `alt+arrows` pane focus · `ctrl+w` close pane ·
+right-click tab: rename. `ctrl+alt+m` (system hotkey) opens a fresh scratch pad.
 Source mode has full text selection (Shift+arrows / word & doc motion) and
 clipboard. Click places the cursor; the live theme file is
 `~/.config/markdown-delight/theme.toml` (hot-reloads while running).

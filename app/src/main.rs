@@ -8,8 +8,8 @@
 //! ctrl+shift+t / [+]: new tab · per-tab [✕]: close tab · ctrl+pgup/pgdn:
 //! switch tab · right-click tab: rename · ctrl+alt+r / [▮│ split]: split right
 //! · ctrl+alt+d / [≣ split]: split down · alt+arrows: pane focus · ctrl+w:
-//! close pane · ctrl+e: source ↔ preview · ctrl+s: save · bezel A–A scrubber:
-//! live text zoom. Opens in SOURCE mode: right-click → open → type.
+//! close pane · ctrl+e: source ↔ preview · ctrl+s: save · ctrl+shift+s: save
+//! as… · bezel A–A scrubber: live text zoom. Opens in SOURCE mode: type away.
 
 mod appearance;
 mod comment_ui;
@@ -1521,6 +1521,89 @@ impl Workspace {
         }
     }
 
+    /// The focused pane's doc (else the active tab's first leaf).
+    fn focused_doc(&self, window: &Window, cx: &App) -> Option<Entity<Doc>> {
+        let tab = self.tabs.get(self.active)?;
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        let pane = leaves
+            .iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .or(leaves.first())?;
+        Some(pane.read(cx).doc.clone())
+    }
+
+    /// Ctrl+Shift+S — Save As: a native "choose where to save" dialog, then write
+    /// there and adopt that path (works for a scratch buffer or to copy an
+    /// existing doc to a new location). Async — the picker runs off the UI thread.
+    fn save_as_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(doc) = self.focused_doc(window, cx) else {
+            return;
+        };
+        let (dir, suggested) = {
+            let d = doc.read(cx);
+            let dir = d
+                .path
+                .as_ref()
+                .and_then(|p| p.parent().map(|x| x.to_path_buf()))
+                .or_else(notebook_dir)
+                .unwrap_or_else(|| {
+                    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                });
+            let _ = std::fs::create_dir_all(&dir);
+            let suggested = d
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| {
+                    let s = slugify(&d.editor.line(0));
+                    format!("{}.md", if s.is_empty() { "untitled" } else { &s })
+                });
+            (dir, suggested)
+        };
+        let rx = cx.prompt_for_new_path(&dir, Some(&suggested));
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(mut path))) = rx.await {
+                if path.extension().is_none() {
+                    path.set_extension("md");
+                }
+                let _ = this.update(cx, |ws, cx| ws.commit_save_as(doc, path, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// Write `doc` to `path`, adopt it as the doc's path, and rename the tab(s)
+    /// that hold this doc. Shared by Save As.
+    fn commit_save_as(&mut self, doc: Entity<Doc>, path: PathBuf, cx: &mut Context<Self>) {
+        let label = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled.md".to_string());
+        let ok = doc.update(cx, |d, cx| match d.editor.save(&path) {
+            Ok(()) => {
+                d.path = Some(path.clone());
+                d.label = label.clone().into();
+                d.reparse();
+                cx.notify();
+                true
+            }
+            Err(e) => {
+                eprintln!("save as failed: {e}");
+                false
+            }
+        });
+        if ok {
+            let id = doc.entity_id();
+            for t in &mut self.tabs {
+                if t.doc.entity_id() == id {
+                    t.name = Some(truncate_label(&label, 40));
+                }
+            }
+            cx.notify();
+        }
+    }
+
     /// Modal "Save & Close": persist the target's dirty docs (those with a path)
     /// then close. Pathless scratch buffers can't be saved — they close anyway.
     fn confirm_save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1878,6 +1961,10 @@ impl Workspace {
         }
         if m.control && !m.alt && !m.shift && ks.key.as_str() == "s" {
             self.save_focused(window, cx);
+            return;
+        }
+        if m.control && m.shift && !m.alt && ks.key.as_str() == "s" {
+            self.save_as_focused(window, cx);
             return;
         }
         if m.control && !m.alt && self.tabs.len() > 1 {

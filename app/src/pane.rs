@@ -1679,8 +1679,11 @@ fn darken(mut c: gpui::Hsla, f: f32) -> gpui::Hsla {
 
 impl Render for MdPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = self.effective_theme(cx);
-        let sc = self.eff_scale(cx);
+        // resolve the appearance ONCE per frame, then derive both the composed
+        // theme and the text scale from it (avoids a second resolve+clone).
+        let r = self.resolved(cx);
+        let sc = theme::font_scale() * r.grade.text_scale;
+        let th = Arc::new(appearance::compose(cx, &r));
         let editing = self.mode == Mode::Source;
         let line_count = self.doc.read(cx).editor.line_count();
         let rail_count = if editing { line_count } else { 99 };

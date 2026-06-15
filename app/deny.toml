@@ -1,10 +1,11 @@
 # cargo-deny policy for markdown-delight.
 #
-# markdown-delight's own source is MIT. The pinned Zed/gpui dependency graph
-# links a few GPL-3.0-or-later crates into the *built binary* (so a redistributed
-# binary would be GPL-3.0 — this is a source-only repo, see THIRD-PARTY-NOTICES.md).
-# This policy gates against *new* copyleft creeping in while explicitly allowing
-# the known GPL crates from the vendored graph.
+# markdown-delight is MIT — source AND distributed binary. The pinned Zed/gpui
+# graph would otherwise link a few GPL-3.0-or-later crates (ztracing / zlog) into
+# the binary via gpui -> sum_tree, so patches/sever-gpl-crates.patch removes that
+# edge (applied by scripts/prepare-gpui.sh). With the sever in place the graph is
+# permissive-clean — no GPL exceptions are needed. This policy keeps it that way:
+# any *new* copyleft crate creeping in fails the gate.
 
 [licenses]
 allow = [
@@ -27,11 +28,6 @@ confidence-threshold = 0.8
 
 exceptions = [
     { allow = ["Unicode-DFS-2016"], name = "finl_unicode" }, # via comrak
-    # GPL-3.0-or-later crates pulled in by the vendored Zed/gpui graph. Never
-    # redistribute a binary under MIT (see THIRD-PARTY-NOTICES.md).
-    { allow = ["GPL-3.0-or-later"], name = "zlog" },
-    { allow = ["GPL-3.0-or-later"], name = "ztracing" },
-    { allow = ["GPL-3.0-or-later"], name = "ztracing_macro" },
 ]
 
 # gpui sub-crates that ship without an embedded license file but are Apache-2.0.

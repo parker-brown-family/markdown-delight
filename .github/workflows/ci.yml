@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 # one in-flight run per ref; new pushes cancel stale runs
@@ -54,6 +55,12 @@ jobs:
       - name: cargo-deny
         working-directory: app
         run: cargo deny check
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo-audit
+        working-directory: app
+        run: cargo audit
 
   prototype:
     name: browser prototype (syntax)
@@ -69,3 +76,60 @@ jobs:
             echo "checking $f"
             node --check "$f"
           done
+
+  package:
+    name: AppImage (artifact)
+    # Build the distributable MIT-clean AppImage on pushes to main and on version
+    # tags. On a tag it is also attached to the GitHub Release (one-command install
+    # for new users); on main it's just a downloadable run artifact.
+    if: github.event_name == 'push'
+    # Pin to the OLDEST glibc we want to support: ubuntu-22.04 ships glibc 2.35, so
+    # the AppImage runs on glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, etc.). Building
+    # on ubuntu-latest (24.04 / glibc 2.39) would make the binary refuse to start on
+    # any older system — glibc is the one lib an AppImage can't bundle.
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write   # needed to attach the AppImage to the release on tags
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare patched gpui (td-crt-pass + sever-gpl-crates)
+        run: ./scripts/prepare-gpui.sh
+
+      # No rust-cache here on purpose: this job runs on ubuntu-22.04 while the rust
+      # checks run on ubuntu-latest, and Swatinem/rust-cache doesn't key on the
+      # runner version — restoring 24.04-built rlibs here breaks the build
+      # ("can't find crate for ashpd"). A clean build keeps the artifact correct.
+      # cargo-about is installed on demand by build-appimage.sh.
+      - name: Build AppImage
+        run: ./scripts/build-appimage.sh
+
+      - name: Upload AppImage (run artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: markdown-delight-x86_64.AppImage
+          path: dist/markdown-delight-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Attach AppImage to the GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/markdown-delight-x86_64.AppImage
+          generate_release_notes: true
+          fail_on_unmatched_files: true

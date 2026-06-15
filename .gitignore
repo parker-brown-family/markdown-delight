@@ -6,3 +6,7 @@ app/target/
 
 # local build config (shared target dir is machine-specific)
 app/.cargo/
+
+# AppImage build outputs
+dist/
+.appimage-build/

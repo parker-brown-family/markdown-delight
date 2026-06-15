@@ -14,6 +14,22 @@ checkout. Everything else is plain `cargo`.
 This is the **only** unusual step. Once the patched `../zed-upstream` exists,
 `cargo run` works like any Rust project.
 
+> **Don't want to build at all?** Tagged releases ship a self-contained,
+> MIT-clean **AppImage** — just download and run it (see the README *Download*
+> section). Building from source is for contributors and for anyone who wants the
+> binary on their own terms.
+
+> **MIT-clean binary:** [`scripts/prepare-gpui.sh`](scripts/prepare-gpui.sh)
+> (used by CI and the recommended setup path) applies **two** patches to the
+> pinned checkout: `td-crt-pass` (the render patch below) **and**
+> `sever-gpl-crates.patch`, which cuts the GPL-3.0 leaf crates (`ztracing`,
+> `zlog`) out of the gpui dependency graph. With them severed the resulting
+> binary links **no GPL code** and is MIT-distributable — which is what makes the
+> downloadable AppImage possible. (The manual steps below apply only
+> `td-crt-pass` so you can `cargo run` locally; run `scripts/prepare-gpui.sh` for
+> a release-equivalent, MIT-clean build.) The clean-room rule is unaffected:
+> Zed's GPL `editor`/`language` crates were never used either way.
+
 ## The directory layout you're aiming for
 
 `app/Cargo.toml` references gpui via `../../zed-upstream`, so the two repos must be

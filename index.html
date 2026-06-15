@@ -7,7 +7,7 @@
        fonts limited to Google. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>markdown-delight — GPU-native Linux Markdown editor</title>
-  <meta name="description" content="A tabful, tiling Linux Markdown editor in Rust (gpui + comrak): native render with no webview, a Google-Docs-style comment mode, hot-reloadable CRT themes, set as your default .md handler. Source-only, MIT." />
+  <meta name="description" content="A tabful, tiling Linux Markdown editor in Rust (gpui + comrak): native render with no webview, a Google-Docs-style comment mode, hot-reloadable CRT themes, set as your default .md handler. MIT-licensed, downloadable AppImage." />
 
   <!-- Open Graph / social cards -->
   <meta property="og:title" content="markdown-delight" />
@@ -168,12 +168,12 @@
 
   <header class="hero">
     <div class="wrap">
-      <div class="eyebrow">GPU-native · Rust · Linux · v0.1.0</div>
+      <div class="eyebrow">GPU-native · Rust · Linux · v0.2.0</div>
       <h1>markdown-<span class="u">delight</span></h1>
       <p class="tag">A tabful, tiling Linux Markdown editor that opens any <code>.md</code> into a gorgeous, themeable, native-snappy surface — not a flat gray pane.</p>
       <p class="sub">Rust end-to-end: <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">gpui</a> renders every pixel on the GPU and <a href="https://github.com/kivikakk/comrak">comrak</a> turns CommonMark+GFM into native elements — <b>no webview</b>. Live source ▸ preview, a Google-Docs-style <b>comment mode</b>, tiling multi-pane with per-pane themes, and a real CRT barrel warp. Set it as your system default <code>.md</code> handler.</p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/parker-brown-family/markdown-delight/releases/tag/v0.1.0">▾ Get v0.1.0</a>
+        <a class="btn primary" href="https://github.com/parker-brown-family/markdown-delight/releases/latest">▾ Download the AppImage</a>
         <a class="btn" href="https://github.com/parker-brown-family/markdown-delight">★ Star on GitHub</a>
         <a class="btn" href="#build">⌨ Build from source</a>
       </div>
@@ -234,11 +234,11 @@
       <div class="runcard">
         <div>
           <h3>No web demo of the engine, on purpose.</h3>
-          <p>markdown-delight renders on the GPU through gpui/wgpu — it isn't a webpage and a browser shell wouldn't be the real engine. Grab the source and run the actual app on your Linux box. (There <em>is</em> a zero-build <a href="prototype.html">browser design reference</a> — the source ▸ preview prototype that drives the theme tokens and chrome — but the product is native.)</p>
+          <p>markdown-delight renders on the GPU through gpui/wgpu — it isn't a webpage and a browser shell wouldn't be the real engine. Download the self-contained MIT <a href="https://github.com/parker-brown-family/markdown-delight/releases/latest">AppImage</a> and run the actual app on your Linux box (or build it from source). (There <em>is</em> a zero-build <a href="prototype.html">browser design reference</a> — the source ▸ preview prototype that drives the theme tokens and chrome — but the product is native.)</p>
         </div>
         <div class="cta" style="justify-content:flex-end">
-          <a class="btn primary" href="#build">⌨ Build &amp; run</a>
-          <a class="btn" href="https://github.com/parker-brown-family/markdown-delight/releases/tag/v0.1.0">v0.1.0 ↗</a>
+          <a class="btn primary" href="https://github.com/parker-brown-family/markdown-delight/releases/latest">▾ Download AppImage</a>
+          <a class="btn" href="#build">⌨ Build &amp; run</a>
         </div>
       </div>
     </div>
@@ -259,8 +259,8 @@
       </div>
       <div class="prose">
         <div class="eyebrow">Honesty</div>
-        <h2>Source-only. Linux-only. On purpose.</h2>
-        <p>markdown-delight's own code is <b>MIT</b>, and the editor core is clean-room original work on <code>ropey</code> — Zed's GPL editor crate was never used. But it builds against a pinned Zed/gpui graph that links <b>GPL-3.0</b> crates, so a redistributed <em>binary</em> would be GPL-3.0. We don't ship binaries; you build from source.</p>
+        <h2>MIT all the way down. Linux-only. On purpose.</h2>
+        <p>The code <em>and</em> the binary are <b>MIT</b>. We sever the <b>GPL-3.0</b> crates the Zed/gpui graph would otherwise link (<code>patches/sever-gpl-crates.patch</code>), so the shipped <a href="https://github.com/parker-brown-family/markdown-delight/releases/latest">AppImage</a> is self-contained and carries no GPL boundary. It's still clean-room: the editor core is original work on <code>ropey</code> — Zed's GPL editor crate was never used.</p>
         <p>It targets the freedesktop Linux desktop (X11 &amp; Wayland) via gpui's wgpu renderer. <b>Not</b> macOS or Windows.</p>
         <p><a href="https://github.com/parker-brown-family/markdown-delight/blob/main/THIRD-PARTY-NOTICES.md">License boundary, in detail ↗</a></p>
       </div>
@@ -304,8 +304,8 @@ cargo build --release &amp;&amp; ../scripts/make-default.sh</pre>
     <div class="wrap cols">
       <div>
         <div class="brand">▸ markdown-delight<span class="blink">_</span></div>
-        <div style="margin-top:8px">MIT source · GPL-3.0 binary boundary · Linux only</div>
-        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">comrak</span> <span class="pill">crt</span> <span class="pill">v0.1.0</span></div>
+        <div style="margin-top:8px">MIT source + binary · AppImage · Linux only</div>
+        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">comrak</span> <span class="pill">crt</span> <span class="pill">v0.2.0</span></div>
       </div>
       <div>
         <div><a href="https://github.com/parker-brown-family/markdown-delight">GitHub repository ↗</a></div>

@@ -44,33 +44,52 @@ pub enum Block {
     Html(Vec<SharedString>),
 }
 
-pub fn parse(text: &str) -> Vec<Block> {
-    let arena = Arena::new();
+fn md_options() -> Options<'static> {
     let mut options = Options::default();
     options.extension.table = true;
     options.extension.strikethrough = true;
     options.extension.tasklist = true;
     options.extension.autolink = true;
-    let root = parse_document(&arena, text, &options);
-    root.children().filter_map(to_block).collect()
+    options
 }
 
 /// Parse, and alongside the render tree emit per-block anchor metadata
-/// (fingerprint + plain text) so comment threads can attach and survive edits.
-/// `src` is reserved for future source-range bridging (kept 0..0 for now).
+/// (fingerprint + plain text + source line range). The `src` range — the bytes
+/// of the block's lines in the original buffer, derived from comrak's sourcepos —
+/// lets comment threads attach, survive edits, AND be injected back into the
+/// original markdown on "copy with comments".
 pub fn parse_with_meta(text: &str) -> (Vec<Block>, Vec<crate::comments::BlockMeta>) {
-    let blocks = parse(text);
-    let meta = blocks
-        .iter()
-        .map(|b| {
-            let plain = block_plain(b);
-            crate::comments::BlockMeta {
-                fp: crate::comments::fingerprint(&plain),
-                plain,
-                src: 0..0,
-            }
-        })
-        .collect();
+    let arena = Arena::new();
+    let root = parse_document(&arena, text, &md_options());
+
+    // byte offset where each 1-based source line begins
+    let mut line_start = vec![0usize];
+    for (i, b) in text.bytes().enumerate() {
+        if b == b'\n' {
+            line_start.push(i + 1);
+        }
+    }
+    // byte just past the end of 1-based `line` (= start of the next line, or EOF)
+    let after_line = |line: usize| line_start.get(line).copied().unwrap_or(text.len());
+
+    let mut blocks = Vec::new();
+    let mut meta = Vec::new();
+    for node in root.children() {
+        let Some(b) = to_block(node) else { continue };
+        let plain = block_plain(&b);
+        let sp = node.data.borrow().sourcepos;
+        let start = line_start
+            .get(sp.start.line.saturating_sub(1))
+            .copied()
+            .unwrap_or(0);
+        let end = after_line(sp.end.line).max(start);
+        meta.push(crate::comments::BlockMeta {
+            fp: crate::comments::fingerprint(&plain),
+            plain,
+            src: start..end,
+        });
+        blocks.push(b);
+    }
     (blocks, meta)
 }
 

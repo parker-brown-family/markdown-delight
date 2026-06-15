@@ -592,6 +592,55 @@ impl Workspace {
         ws
     }
 
+    /// A fast, single blank scratch-pad window (Ctrl+Alt+M). Like `new` but with
+    /// ONE empty untitled doc, and NO session restore + NO autosave — so a quick
+    /// note window never reopens your tabs or overwrites the saved session. It
+    /// still adopts the remembered outer + inner look (best guess).
+    fn scratch(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let doc = cx.new(|_| Doc::new("scratch".to_string(), None, String::new()));
+        let mut ws = Self {
+            doc: doc.clone(),
+            tabs: vec![],
+            active: 0,
+            focus_handle: cx.focus_handle(),
+            renaming: None,
+            jiggle: FrameJiggle::new(),
+            last_action: Instant::now() - Duration::from_secs(1),
+            drag_split: None,
+            split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            drop_target: None,
+            confirm_close: None,
+            theme_menu: None,
+            menu_at: None,
+            outer: appearance::OuterAppearance::default(),
+            default_inner: appearance::default_inner(),
+            font_drag: false,
+            font_track: Arc::new(Mutex::new(None)),
+            pane_seed: 0xD0C5,
+            finder: None,
+            index: finder::FileIndex::spawn(),
+        };
+        // adopt the remembered look, but DON'T restore tabs or start autosave
+        let saved = session::load();
+        if let Some(o) = saved.outer {
+            ws.outer = o;
+        }
+        if let Some(i) = saved.inner {
+            ws.default_inner = i;
+        }
+        ws.rebuild_outer(cx);
+        let di = ws.default_inner.clone();
+        let pane = ws.make_pane(Mode::Source, di, cx);
+        ws.tabs.push(Tab {
+            root: Node::Leaf(pane),
+            name: Some("scratch".into()),
+            doc,
+        });
+        ws.focus_active(window, cx);
+        ws.start_jiggle(cx);
+        ws
+    }
+
     /// The frame-wide jiggle ticker (shared by `new` and `from_pane`).
     fn start_jiggle(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| loop {
@@ -3473,10 +3522,18 @@ fn read_file(path: &PathBuf) -> (String, Option<PathBuf>, String) {
     }
 }
 
-fn load() -> (String, Option<PathBuf>, String) {
-    match env::args().nth(1) {
-        Some(path) => read_file(&PathBuf::from(path)),
-        None => ("sample.md".to_string(), None, SAMPLE.to_string()),
+/// Parse argv into a launch request: `--scratch` → a fresh scratch pad, any
+/// other args → files to open, nothing → a bare launch (sample window).
+fn parse_request() -> ipc::Request {
+    let mut args = env::args().skip(1);
+    match args.next().as_deref() {
+        Some("--scratch") => ipc::Request::Scratch,
+        Some(first) => {
+            let mut paths = vec![PathBuf::from(first)];
+            paths.extend(args.map(PathBuf::from));
+            ipc::Request::Open(paths)
+        }
+        None => ipc::Request::Open(Vec::new()),
     }
 }
 
@@ -3515,19 +3572,46 @@ fn open_doc_window(label: String, path: Option<PathBuf>, text: String, cx: &mut 
     .expect("open window");
 }
 
-/// Handle a launch request forwarded from a sibling process: open the file(s)
-/// it carried (or, for a bare click with none, just raise the existing window),
-/// then pull our window to the front so the click feels instant.
-fn handle_forwarded(req: ipc::OpenRequest, cx: &mut App) {
-    for path in req {
-        let (label, p, text) = read_file(&path);
-        open_doc_window(label, p, text, cx);
-    }
-    // A bare request with no windows yet (rare: every window was closed but the
-    // process lingered) still deserves a fresh blank one.
-    if cx.windows().is_empty() {
-        let (label, path, text) = ("sample.md".to_string(), None, SAMPLE.to_string());
-        open_doc_window(label, path, text, cx);
+/// Open a fresh, blank scratch-pad window (Ctrl+Alt+M). No session restore and
+/// no autosave, so a quick note never disturbs the saved session — and because
+/// a resident primary handles the forward, it pops open instantly.
+fn open_scratch_window(cx: &mut App) {
+    let bounds = gpui::Bounds::centered(None, size(px(900.), px(640.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("scratch — markdown-delight".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        move |window, cx| {
+            window.set_app_id("markdown-delight");
+            cx.new(|cx| Workspace::scratch(window, cx))
+        },
+    )
+    .expect("open scratch window");
+}
+
+/// Handle a launch request forwarded from a sibling process: open the file(s) it
+/// carried (or a fresh scratch pad, or — for a bare click — just raise), then
+/// pull our window to the front so the action feels instant.
+fn handle_forwarded(req: ipc::Request, cx: &mut App) {
+    match req {
+        ipc::Request::Scratch => open_scratch_window(cx),
+        ipc::Request::Open(paths) => {
+            for path in paths {
+                let (label, p, text) = read_file(&path);
+                open_doc_window(label, p, text, cx);
+            }
+            // A bare request with no windows yet (rare: every window was closed
+            // but the process lingered) still deserves a fresh blank one.
+            if cx.windows().is_empty() {
+                let (label, path, text) = ("sample.md".to_string(), None, SAMPLE.to_string());
+                open_doc_window(label, path, text, cx);
+            }
+        }
     }
     cx.activate(true);
 }
@@ -3536,21 +3620,34 @@ fn main() {
     let t0 = Instant::now();
     let _ = START.set(t0);
 
-    // Single-instance: if a primary is already up, hand it our file and bail
-    // BEFORE touching the GPU — that is what makes a second click snap open.
-    let forward: Vec<PathBuf> = env::args().skip(1).map(PathBuf::from).collect();
-    if ipc::try_forward(&forward) {
+    // Single-instance: if a primary is already up, hand it our request and bail
+    // BEFORE touching the GPU — that is what makes Ctrl+Alt+M (and any second
+    // click) snap open instead of cold-starting the dGPU.
+    let req = parse_request();
+    if ipc::try_forward(&req) {
         return;
     }
-    // We are the primary. Listen for siblings' forwarded opens.
+    // We are the primary. Listen for siblings' forwarded requests.
     let server = ipc::start_server();
-
-    let (label, path, text) = load();
-    stamp(t0, "file loaded");
+    stamp(t0, "request parsed");
     application().run(move |cx: &mut App| {
         stamp(t0, "app callback (gpu/window subsystem up)");
         theme::init(cx);
-        open_doc_window(label, path, text, cx);
+        // open the initial window for however we were launched
+        match &req {
+            ipc::Request::Scratch => open_scratch_window(cx),
+            ipc::Request::Open(paths) => {
+                if paths.is_empty() {
+                    let (label, path, text) = ("sample.md".to_string(), None, SAMPLE.to_string());
+                    open_doc_window(label, path, text, cx);
+                } else {
+                    for p in paths {
+                        let (label, pp, text) = read_file(p);
+                        open_doc_window(label, pp, text, cx);
+                    }
+                }
+            }
+        }
         stamp(t0, "window opened (pre first frame)");
         cx.activate(true);
 
@@ -3561,7 +3658,7 @@ fn main() {
                 cx.background_executor()
                     .timer(Duration::from_millis(80))
                     .await;
-                let mut reqs: Vec<ipc::OpenRequest> = Vec::new();
+                let mut reqs: Vec<ipc::Request> = Vec::new();
                 while let Ok(req) = rx.try_recv() {
                     reqs.push(req);
                 }

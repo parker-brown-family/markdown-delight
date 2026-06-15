@@ -1,6 +1,6 @@
 [package]
 name = "markdown-delight"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Tabful, tiling Linux Markdown editor — native-snappy, web-app polished, themeable, settable as the default .md handler"

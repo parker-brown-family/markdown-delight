@@ -7,8 +7,35 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-15
+
+The release that makes markdown-delight a **download**. We severed the GPL edge of
+the vendored Zed/gpui graph, so the shipped binary is now MIT-clean and ships as a
+self-contained AppImage.
+
+### Distribution — now MIT-distributable
+
+- **Severed the GPL edge.** `scripts/prepare-gpui.sh` now applies
+  `patches/sever-gpl-crates.patch`, which cuts the GPL-3.0 leaf crates
+  (`ztracing`, `zlog`) out of the gpui dependency graph. The resulting **binary
+  links no GPL code** — it is MIT-distributable. This retires the 0.1.0
+  source-only boundary; **clean-room is unchanged** — Zed's GPL
+  `editor`/`markdown`/`rope`/`text`/`language` crates remain study-only and are
+  still never used or copied.
+- **Downloadable AppImage.** Tagged releases now publish a self-contained
+  `markdown-delight-x86_64.AppImage` via CI. Needs glibc ≥ 2.35 (Ubuntu 22.04+ /
+  Debian 12+) and the host GPU/Vulkan stack (drivers are not bundled). See the
+  README **Download** section.
+- **cargo-deny passes with no GPL exceptions.** With the GPL leaves severed, the
+  license check is clean against the MIT/Apache/BSD/ISC allowlist — no
+  per-crate GPL waivers.
+
 ### Added
 
+- **Undo/redo** in the source editor — coalesced rope-diff transactions.
+- **Comment "copy with comments"** — export a document with its review threads
+  inline.
+- **Help modal** — an in-app keymap/quick-reference overlay.
 - **Save As** (`Ctrl+Shift+S`) — a native "choose where to save" dialog
   (`prompt_for_new_path`); writes there and adopts the path, renaming the tab.
   `Ctrl+S` still saves in place (scratch buffers auto-name into the notebook dir).
@@ -30,7 +57,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [0.1.0] — 2026-06-14
 
-First public, source-only release. A tabful, tiling Linux Markdown editor
+First public release — source-only at the time (see 0.2.0, which severed the GPL
+edge and made the binary MIT-distributable). A tabful, tiling Linux Markdown editor
 (Rust + gpui + comrak) that renders Markdown natively — no webview — with a
 hot-reloadable, CRT-flavored visual identity.
 
@@ -77,10 +105,11 @@ hot-reloadable, CRT-flavored visual identity.
 ### Project / packaging
 
 - MIT-licensed own source; the editor core is clean-room original work on
-  `ropey` (Zed's GPL `editor` crate was never used or copied). Binaries are
-  **not** MIT-distributable because the vendored Zed/gpui graph links GPL-3.0
-  crates — see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). This is a
-  **source-only** release.
+  `ropey` (Zed's GPL `editor` crate was never used or copied). At this release
+  the binary was **not** MIT-distributable because the vendored Zed/gpui graph
+  still linked GPL-3.0 leaf crates — so 0.1.0 was a **source-only** release.
+  (0.2.0 severed that edge; the binary is now MIT-clean — see
+  [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).)
 - Contributor docs: [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md),
   [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), and the build plan in
   [`docs/PLAN.md`](docs/PLAN.md).
@@ -90,5 +119,6 @@ hot-reloadable, CRT-flavored visual identity.
 - Linux only (X11 & Wayland via gpui's wgpu renderer); verified on X11 ·
   NVIDIA · Vulkan. Not macOS/Windows.
 
-[Unreleased]: https://github.com/parker-brown-family/markdown-delight/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/parker-brown-family/markdown-delight/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/parker-brown-family/markdown-delight/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/parker-brown-family/markdown-delight/releases/tag/v0.1.0

@@ -4,7 +4,9 @@
 <meta name="description" content="markdown-delight presented on a mid-century console television: the agent → markdown-delight → copy-with-comments → you → agent review loop, warped onto a CRT you can tune.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%2307120c'/><text y='12' x='2' font-size='11' fill='%2336ff86'>▣</text></svg>">
 <style>
-  :root{ --wood1:#4a3a24; --wood2:#2c2114; --wood3:#5e4a30; --brass:#caa84e; }
+  :root{ --wood1:#4a3a24; --wood2:#2c2114; --wood3:#5e4a30; --brass:#caa84e;
+    /* case phosphor spill — JS sets these to the current channel's PICTURE glow colour */
+    --spill:rgba(255,154,60,.16); --spill-soft:rgba(255,154,60,.26); }
   *{box-sizing:border-box} html,body{margin:0;height:100%}
   body{
     background:
@@ -30,9 +32,9 @@
     box-shadow:0 0 0 2px #00000033, 0 0 26px #0006 inset; pointer-events:none; }
   .screen-housing{ position:relative; border-radius:50px/40px; padding:20px;
     background:linear-gradient(150deg,#101410,#1a2417);
-    box-shadow:0 0 0 3px #0006, 0 10px 30px #000a inset, 0 2px 0 #ffffff14 inset, 0 0 60px -6px rgba(54,255,134,.20); }
+    box-shadow:0 0 0 3px #0006, 0 10px 30px #000a inset, 0 2px 0 #ffffff14 inset, 0 0 60px -6px var(--spill-soft); }
   .screen-housing::after{ content:""; position:absolute; inset:-6px; border-radius:54px/44px; pointer-events:none;
-    box-shadow:0 0 50px 4px rgba(54,255,134,.14) inset; mix-blend-mode:screen; }
+    box-shadow:0 0 50px 4px var(--spill) inset; mix-blend-mode:screen; }
   .screen{ position:relative; aspect-ratio:4/3; border-radius:46px/36px; overflow:hidden;
     background:#020a06; box-shadow:0 0 60px #0008 inset, 0 0 0 6px #0b0907; }
   .screen canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default; }
@@ -96,12 +98,14 @@
 const cv=document.getElementById('gl'); let gl=cv.getContext('webgl2',{antialias:false,alpha:false}); let ctx2d=null;
 let W,H, dpr=Math.min(2,window.devicePixelRatio||1);
 const scene=document.createElement('canvas'); const x=scene.getContext('2d');
+// each channel: a SCREEN BACKGROUND hue (bg + bgTint wash) and a different
+// PICTURE GLOW hue (phos/dim/bright/glow/tint + spill, which also lights the case).
 const CHANNELS=[
- {name:'PHOSPHOR', phos:'#36ff86',dim:'#1f9f57',bright:'#bfffd8',accent:'#36ff86',bg:'#020a06',tint:[0.5,1.0,0.6],glow:'#0f8'},
- {name:'AMBER',    phos:'#ffb000',dim:'#a87600',bright:'#ffe0a0',accent:'#ffb000',bg:'#0a0700',tint:[1.0,0.7,0.2],glow:'#fb0'},
- {name:'BOLT',     phos:'#38e1ff',dim:'#1f86a8',bright:'#cbf6ff',accent:'#22d3ee',bg:'#02080c',tint:[0.4,0.9,1.0],glow:'#0df'},
- {name:'ECLIPSE',  phos:'#c084fc',dim:'#6f47a0',bright:'#ead9fc',accent:'#c084fc',bg:'#07040c',tint:[0.78,0.52,1.0],glow:'#a6f'},
- {name:'PRISM',    phos:'#ff5ed0',dim:'#a83a8a',bright:'#ffd0f0',accent:'#ff5ed0',bg:'#0a0208',tint:[1.0,0.4,0.85],glow:'#f5c'},
+ {name:'TIDE',   bg:'#06122e', bgTint:[0.22,0.42,1.0],  phos:'#ff9a3c',dim:'#b3611c',bright:'#ffd8b0',accent:'#ff9a3c',glow:'#ff9a3c',tint:[1.0,0.6,0.25], spill:'255,154,60'},   // blue bg · orange glow
+ {name:'ORCHARD',bg:'#06160c', bgTint:[0.30,1.0,0.5],   phos:'#c084fc',dim:'#7a4fb0',bright:'#ead9fc',accent:'#c084fc',glow:'#c084fc',tint:[0.78,0.52,1.0],spill:'192,132,252'},  // green bg · purple glow
+ {name:'NOVA',   bg:'#120726', bgTint:[0.70,0.45,1.0],  phos:'#f5f7ff',dim:'#aeb3c8',bright:'#ffffff',accent:'#f5f7ff',glow:'#f5f7ff',tint:[0.95,0.96,1.0],spill:'245,247,255'},  // purple bg · white glow
+ {name:'BUBBLE', bg:'#1e0614', bgTint:[1.0,0.38,0.78],  phos:'#ffe14d',dim:'#b39a1c',bright:'#fff6c0',accent:'#ffe14d',glow:'#ffe14d',tint:[1.0,0.88,0.35],spill:'255,225,77'},   // pink bg · yellow glow
+ {name:'BULLION',bg:'#1a1402', bgTint:[1.0,0.78,0.22],  phos:'#aebb4f',dim:'#6b7726',bright:'#dfe6a8',accent:'#aebb4f',glow:'#aebb4f',tint:[0.68,0.74,0.30],spill:'174,187,79'},  // gold bg · olive-drab glow
 ];
 let chan=0; const cur=()=>CHANNELS[chan];
 let snow=0, osdUntil=0;
@@ -115,10 +119,14 @@ for(const k in SRC){ const im=new Image(); im.onload=()=>{ IMG[k]=im; }; im.src=
 const BTNS=[
   {label:'▾ Download', url:'https://github.com/parker-brown-family/markdown-delight/releases/latest', primary:true},
   {label:'★ GitHub', url:'https://github.com/parker-brown-family/markdown-delight'},
+  {label:'▸ Explore the full site', url:'/', wide:true},
 ];
 let btnRects=[], hover=-1;
 const K={barrel:0.62, fade:0.9, track:0.5};
 function layout(){ const r=cv.getBoundingClientRect(); W=Math.max(2,Math.round(r.width*dpr)); H=Math.max(2,Math.round(r.height*dpr)); cv.width=W;cv.height=H;scene.width=W;scene.height=H; }
+// push the current channel's PICTURE glow onto the TV case (CSS spill vars)
+function setSpill(){ const sp=cur().spill, rs=document.documentElement.style;
+  rs.setProperty('--spill', `rgba(${sp},0.16)`); rs.setProperty('--spill-soft', `rgba(${sp},0.26)`); }
 
 function rr(rx,ry,rw,rh,r){x.beginPath();x.moveTo(rx+r,ry);x.arcTo(rx+rw,ry,rx+rw,ry+rh,r);x.arcTo(rx+rw,ry+rh,rx,ry+rh,r);x.arcTo(rx,ry+rh,rx,ry,r);x.arcTo(rx,ry,rx+rw,ry,r);x.closePath();}
 function rand(s){ const v=Math.sin(s*12.9898)*43758.5453; return (v-Math.floor(v)); }
@@ -152,17 +160,18 @@ function node(p, sz, col, pop){
 function drawScene(t){
   const c=cur(), s=Math.max(0.5,W/900), narrow=W<560*dpr;
   x.fillStyle=c.bg; x.fillRect(0,0,W,H);
-  const g=x.createRadialGradient(W/2,H*0.55,0,W/2,H*0.55,H); g.addColorStop(0,rgba(c.tint,0.45)); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
+  // the screen-background wash uses the BACKGROUND hue (bgTint), distinct from the picture glow
+  const g=x.createRadialGradient(W/2,H*0.50,0,W/2,H*0.50,H); g.addColorStop(0,rgba(c.bgTint,0.5)); g.addColorStop(1,'rgba(0,0,0,0)'); x.fillStyle=g; x.fillRect(0,0,W,H);
   x.textAlign='center'; x.textBaseline='middle';
   // title
   x.shadowColor=c.glow; x.shadowBlur=16*s*dpr; x.fillStyle=c.phos;
   x.font=`800 ${(narrow?20:30)*s*dpr}px ui-monospace,monospace`;
-  x.fillText('THE  CIRCLE  OF  ( md )  LIFE', W/2, H*0.115); x.shadowBlur=0;
+  x.fillText('THE  CIRCLE  OF  ( md )  LIFE', W/2, H*0.10); x.shadowBlur=0;
   x.fillStyle=c.bright; x.font=`${(narrow?9.5:12)*s*dpr}px ui-monospace,monospace`;
-  x.fillText('agent  →  markdown-delight  →  copy  →  you  →  agent  …', W/2, H*0.185);
+  x.fillText('agent  →  markdown-delight  →  copy  →  you  →  agent  …', W/2, H*0.155);
 
   // loop: agent(left) → editor(top) → copy(right) → you(bottom) → agent
-  const ccx=W/2, ccy=H*0.56, rx=W*0.30, ry=H*0.275;
+  const ccx=W/2, ccy=H*0.47, rx=W*0.30, ry=H*0.215;
   const pos=[
     {img:IMG.agent,  who:'AGENT',           x:ccx-rx, y:ccy},
     {img:IMG.editor, who:'markdown-delight',x:ccx,    y:ccy-ry},
@@ -178,20 +187,22 @@ function drawScene(t){
     x.font=`${(lit?700:600)} ${(narrow?9:11)*s*dpr}px ui-monospace,monospace`;
     x.fillText(STEP[i], m.x, m.y); x.shadowBlur=0; }
   // nodes + who-labels (pop the destination node as the spark arrives)
-  const bs=Math.min(W,H)*(narrow?0.20:0.17);
+  const bs=Math.min(W,H)*(narrow?0.18:0.155);
   for(let i=0;i<4;i++){ const dest=(seg+1)%4; const pop=(i===dest)?Math.max(0,Math.sin(frac*Math.PI)):0;
     node(pos[i], bs, c, pop);
     x.fillStyle=c.phos; x.font=`700 ${(narrow?9:11)*s*dpr}px ui-monospace,monospace`;
-    x.fillText(pos[i].who, pos[i].x, pos[i].y+bs*0.62); }
+    x.fillText(pos[i].who, pos[i].x, pos[i].y+bs*0.58); }
   // the traveling spark
   const A=arcs[seg]; const sp=A.P(A.t0+(A.t1-A.t0)*frac);
   x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=20*dpr;
   x.beginPath(); x.arc(sp.x,sp.y,6.5*dpr,0,7); x.fill(); x.shadowBlur=0;
 
-  // buttons (bottom)
-  btnRects=[]; const bh=(narrow?34:40)*s*dpr, gap=12*s*dpr, bw=(narrow?150:172)*s*dpr;
-  const total=BTNS.length*bw+(BTNS.length-1)*gap; let bx=W/2-total/2, by=H*0.90;
-  BTNS.forEach((b,i)=>{ drawBtn(b,i,bx,by,bw,bh,s); bx+=bw+gap; });
+  // buttons: Download + GitHub in a row, then a wide "full site" button below
+  btnRects=[]; const bh=(narrow?30:34)*s*dpr, gap=11*s*dpr, bw=(narrow?148:168)*s*dpr;
+  const rowW=2*bw+gap; let by=H*0.82;
+  drawBtn(BTNS[0],0,W/2-rowW/2,by,bw,bh,s);
+  drawBtn(BTNS[1],1,W/2-rowW/2+bw+gap,by,bw,bh,s);
+  drawBtn(BTNS[2],2,W/2-rowW/2,by+bh+gap,rowW,bh,s);
   // channel OSD
   if(performance.now()<osdUntil){ x.textAlign='right'; x.fillStyle=c.bright; x.shadowColor=c.glow; x.shadowBlur=9*dpr;
     x.font=`700 ${13*s*dpr}px ui-monospace,monospace`;
@@ -268,9 +279,9 @@ bindKnob(document.getElementById('k-barrel'),document.getElementById('v-barrel')
 bindKnob(document.getElementById('k-fade'),document.getElementById('v-fade'),'fade',v=>Math.round(v*100)+'%');
 bindKnob(document.getElementById('k-track'),document.getElementById('v-track'),'track',v=>Math.round(v*100)+'%');
 (function(){const el=document.getElementById('k-chan'); let a=0;
-  function go(d){ chan=(chan+d+CHANNELS.length)%CHANNELS.length; a+=d*(360/CHANNELS.length); el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; }
+  function go(d){ chan=(chan+d+CHANNELS.length)%CHANNELS.length; a+=d*(360/CHANNELS.length); el.style.transform='rotate('+a+'deg)'; snow=1.0; osdUntil=performance.now()+1700; setSpill(); }
   el.addEventListener('pointerdown',e=>{e.preventDefault();go(1);});
   el.addEventListener('wheel',e=>{e.preventDefault();go(Math.sign(e.deltaY)||1);},{passive:false}); })();
 addEventListener('resize',()=>{layout();});
-layout(); requestAnimationFrame(frame);
+layout(); setSpill(); requestAnimationFrame(frame);
 </script></body></html>

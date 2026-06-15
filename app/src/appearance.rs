@@ -29,7 +29,7 @@ use crate::theme::{self, Theme};
 pub struct ActiveOuter(pub OuterAppearance);
 impl Global for ActiveOuter {}
 
-/// Read the active outer appearance (falls back to a hacker default).
+/// Read the active outer appearance (falls back to the paper default).
 pub fn outer(cx: &App) -> OuterAppearance {
     cx.try_global::<ActiveOuter>()
         .map(|o| o.0.clone())
@@ -236,9 +236,19 @@ impl OuterAppearance {
 }
 
 impl Default for OuterAppearance {
+    /// The overall default outer look: a light **paper** chrome.
     fn default() -> Self {
-        Self::new("hacker")
+        Self::new("paper")
     }
+}
+
+/// The overall default *inner* (pane) look: a **hacker** tube, pinned so it
+/// shows green even while the outer chrome is paper. Used for the very first
+/// pane / new panes when no remembered inner exists.
+pub fn default_inner() -> PaneAppearance {
+    let mut p = PaneAppearance::default();
+    p.set_colour(Colour::new("hacker"));
+    p
 }
 
 /// Per-pane overrides + per-group inherit flags. A group with `inherit = true`
@@ -489,6 +499,22 @@ mod tests {
 
     fn outer() -> OuterAppearance {
         OuterAppearance::new("hacker")
+    }
+
+    #[test]
+    fn overall_default_is_paper_outer_hacker_inner() {
+        assert_eq!(OuterAppearance::default().colour.id, "paper");
+        let inner = default_inner();
+        assert!(
+            !inner.inherit_colour,
+            "inner pins its colour so it shows green"
+        );
+        assert_eq!(inner.colour.as_ref().unwrap().id, "hacker");
+        // resolved against the paper outer, the pane still reads hacker
+        assert_eq!(
+            inner.effective(&OuterAppearance::default()).colour.id,
+            "hacker"
+        );
     }
 
     #[test]

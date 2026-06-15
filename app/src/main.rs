@@ -487,6 +487,9 @@ struct Workspace {
     /// grade / curve. Mirrored to the `appearance::ActiveOuter` global; panes
     /// resolve their own appearance against it.
     outer: appearance::OuterAppearance,
+    /// The look new panes take (the remembered "most recent inner", or the
+    /// hacker default). Splits still inherit the focused pane.
+    default_inner: appearance::PaneAppearance,
     /// Live text-zoom scrubber: true while the knob is held; `font_track` holds
     /// the slider's painted bounds so a drag maps cursor-x → scale.
     font_drag: bool,
@@ -512,17 +515,29 @@ impl Workspace {
             confirm_close: None,
             theme_menu: None,
             menu_at: None,
-            outer: appearance::OuterAppearance::new(theme::theme(cx).name.clone()),
+            // overall default: paper chrome outside, hacker tube inside.
+            outer: appearance::OuterAppearance::default(),
+            default_inner: appearance::default_inner(),
             font_drag: false,
             font_track: Arc::new(Mutex::new(None)),
             pane_seed: 0xD0C5,
             finder: None,
             index: finder::FileIndex::spawn(),
         };
+        // remember last session's outer + most-recent inner look (best guess),
+        // falling back to the paper/hacker default on first run.
+        let saved = session::load();
+        if let Some(o) = saved.outer.clone() {
+            ws.outer = o;
+        }
+        if let Some(i) = saved.inner.clone() {
+            ws.default_inner = i;
+        }
         // publish the outer look to the global panes resolve against
         ws.rebuild_outer(cx);
         // the opening pane: SOURCE mode — right-click → open → start typing
-        let pane = ws.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
+        let di = ws.default_inner.clone();
+        let pane = ws.make_pane(Mode::Source, di, cx);
         let doc = ws.doc.clone();
         ws.tabs.push(Tab {
             root: Node::Leaf(pane),
@@ -556,7 +571,10 @@ impl Workspace {
             confirm_close: None,
             theme_menu: None,
             menu_at: None,
-            outer: appearance::OuterAppearance::new(theme::theme(cx).name.clone()),
+            // a torn-off window matches the current outer look; new panes in it
+            // take the same default inner.
+            outer: appearance::outer(cx),
+            default_inner: appearance::default_inner(),
             font_drag: false,
             font_track: Arc::new(Mutex::new(None)),
             pane_seed: 0xD0C5,
@@ -636,15 +654,8 @@ impl Workspace {
         let doc = cx.new(|_| Doc::new("untitled".to_string(), None, String::new()));
         self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
         let seed = self.pane_seed;
-        let pane = cx.new(|cx| {
-            MdPane::new(
-                doc.clone(),
-                Mode::Source,
-                seed,
-                appearance::PaneAppearance::default(),
-                cx,
-            )
-        });
+        let inner = self.default_inner.clone();
+        let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Source, seed, inner, cx));
         self.tabs.push(Tab {
             root: Node::Leaf(pane),
             name: Some("untitled".to_string()),
@@ -729,7 +740,7 @@ impl Workspace {
         }
         pane.update(cx, |p, _| p.closed = false);
         if self.tabs.is_empty() {
-            let fresh = self.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
+            let fresh = self.make_pane(Mode::Source, self.default_inner.clone(), cx);
             let doc = fresh.read(cx).doc.clone();
             self.tabs.push(Tab {
                 root: Node::Leaf(fresh),
@@ -1238,7 +1249,7 @@ impl Workspace {
         }
         self.tabs.remove(i);
         if self.tabs.is_empty() {
-            let pane = self.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
+            let pane = self.make_pane(Mode::Source, self.default_inner.clone(), cx);
             let doc = pane.read(cx).doc.clone();
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -1298,15 +1309,8 @@ impl Workspace {
             let doc = cx.new(|_| Doc::new(label.clone(), Some(p.clone()), text));
             self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
             let seed = self.pane_seed;
-            let pane = cx.new(|cx| {
-                MdPane::new(
-                    doc.clone(),
-                    Mode::Preview,
-                    seed,
-                    appearance::PaneAppearance::default(),
-                    cx,
-                )
-            });
+            let inner = self.default_inner.clone();
+            let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Preview, seed, inner, cx));
             let name = e.name.or_else(|| Some(truncate_label(&label, 40)));
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -1316,12 +1320,30 @@ impl Workspace {
         }
     }
 
-    /// A cheap fingerprint of the open-file set + active tab — autosave only
-    /// writes the session when this changes.
+    /// The "most recent inner" best guess to remember: the appearance of the
+    /// active tab's first pane (falls back to the current default inner).
+    fn active_inner(&self, cx: &App) -> appearance::PaneAppearance {
+        self.tabs
+            .get(self.active)
+            .and_then(|t| {
+                let mut leaves = vec![];
+                t.root.leaves(&mut leaves);
+                leaves.first().map(|p| p.read(cx).appearance.clone())
+            })
+            .unwrap_or_else(|| self.default_inner.clone())
+    }
+
+    /// A cheap fingerprint of the open-file set + active tab + the saved look —
+    /// autosave only writes the session when this changes.
     fn session_signature(&self, cx: &App) -> String {
-        // include the outer appearance so a theme/seed/texture change triggers a
-        // persist even when the open-file set is unchanged
-        let mut s = format!("{}|{:?}|", self.active, self.outer);
+        // include the outer + inner appearance so a theme/seed/texture/grade
+        // change triggers a persist even when the open-file set is unchanged
+        let mut s = format!(
+            "{}|{:?}|{:?}|",
+            self.active,
+            self.outer,
+            self.active_inner(cx)
+        );
         for t in &self.tabs {
             if let Some(p) = t.doc.read(cx).path.as_ref() {
                 s.push_str(&p.to_string_lossy());
@@ -1332,7 +1354,7 @@ impl Workspace {
     }
 
     /// Persist the open path-bearing tabs (with the active index mapped into the
-    /// filtered list).
+    /// filtered list), plus the outer + most-recent inner look.
     fn persist_session(&self, cx: &App) {
         let mut tabs = vec![];
         let mut active = 0;
@@ -1351,6 +1373,7 @@ impl Workspace {
             active,
             tabs,
             outer: Some(self.outer.clone()),
+            inner: Some(self.active_inner(cx)),
         });
     }
 
@@ -1580,7 +1603,7 @@ impl Workspace {
             }
         }
         if self.tabs.is_empty() {
-            let pane = self.make_pane(Mode::Source, appearance::PaneAppearance::default(), cx);
+            let pane = self.make_pane(Mode::Source, self.default_inner.clone(), cx);
             let doc = pane.read(cx).doc.clone();
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),

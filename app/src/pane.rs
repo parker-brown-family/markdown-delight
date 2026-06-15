@@ -135,9 +135,11 @@ pub struct MdPane {
     comment_ui: Option<CommentUi>,
     /// per-paragraph text layouts captured each render, for drag-select hit-test
     block_layouts: HashMap<usize, TextLayout>,
-    /// active/just-finished paragraph drag-selection
+    /// active/just-finished paragraph drag-selection (comment mode)
     sel: Option<Sel>,
     sel_dragging: bool,
+    /// a left-button text drag is in progress in the source editor
+    text_dragging: bool,
     /// the "all comments" browser overlay is open
     show_browser: bool,
     /// comment author for this session (git user.name → $USER → anon)
@@ -194,6 +196,7 @@ impl MdPane {
             block_layouts: HashMap::new(),
             sel: None,
             sel_dragging: false,
+            text_dragging: false,
             show_browser: false,
             author: comments::default_author(),
             closed: false,
@@ -315,6 +318,26 @@ impl MdPane {
         cx.notify();
     }
 
+    /// Double-click in the source editor → select the word under the pointer.
+    fn select_word_click(&mut self, pos: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        self.place_cursor(pos, false, cx);
+        self.doc.update(cx, |doc, cx| {
+            doc.editor.select_word_at_cursor();
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    /// Triple-click in the source editor → select the whole line.
+    fn select_line_click(&mut self, pos: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        self.place_cursor(pos, false, cx);
+        self.doc.update(cx, |doc, cx| {
+            doc.editor.select_line_at_cursor();
+            cx.notify();
+        });
+        cx.notify();
+    }
+
     pub fn title(&self, cx: &gpui::App) -> SharedString {
         self.doc.read(cx).label.clone()
     }
@@ -358,6 +381,16 @@ impl MdPane {
         // alt chords (alt+arrow pane focus, ctrl+alt splits) belong to the
         // Workspace — never swallow them in the editor.
         if m.alt {
+            return;
+        }
+
+        // undo / redo: ctrl+z, ctrl+shift+z (redo), ctrl+y (redo)
+        if m.control && key == "z" {
+            self.undo_redo(m.shift, cx); // shift → redo
+            return;
+        }
+        if m.control && !m.shift && key == "y" {
+            self.undo_redo(true, cx);
             return;
         }
 
@@ -463,6 +496,21 @@ impl MdPane {
             self.follow_cursor(cx);
             cx.notify();
         }
+    }
+
+    /// Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — undo or redo, then re-render the preview.
+    fn undo_redo(&mut self, redo: bool, cx: &mut Context<Self>) {
+        self.doc.update(cx, |doc, cx| {
+            if redo {
+                doc.editor.redo();
+            } else {
+                doc.editor.undo();
+            }
+            doc.reparse(); // live preview panes follow the undone/redone state
+            cx.notify();
+        });
+        self.follow_cursor(cx);
+        cx.notify();
     }
 
     /// Ctrl+C — copy the selection to the system clipboard.
@@ -1777,7 +1825,28 @@ impl Render for MdPane {
                     MouseButton::Left,
                     cx.listener(|pane, ev: &MouseDownEvent, window, cx| {
                         window.focus(&pane.focus_handle, cx);
-                        pane.place_cursor(ev.position, ev.modifiers.shift, cx);
+                        match ev.click_count {
+                            n if n >= 3 => pane.select_line_click(ev.position, cx),
+                            2 => pane.select_word_click(ev.position, cx),
+                            _ => {
+                                // single click: place caret (shift extends) and
+                                // arm a drag-select
+                                pane.place_cursor(ev.position, ev.modifiers.shift, cx);
+                                pane.text_dragging = true;
+                            }
+                        }
+                    }),
+                )
+                .on_mouse_move(cx.listener(|pane, ev: &MouseMoveEvent, _w, cx| {
+                    // extend the selection to the pointer while dragging
+                    if pane.text_dragging && ev.pressed_button == Some(MouseButton::Left) {
+                        pane.place_cursor(ev.position, true, cx);
+                    }
+                }))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|pane, _: &MouseUpEvent, _w, _cx| {
+                        pane.text_dragging = false;
                     }),
                 )
             })

@@ -12,6 +12,29 @@ use std::{fs, io, ops::Range, path::Path};
 
 use ropey::Rope;
 
+/// Cap on retained undo steps — the oldest drop off the bottom.
+const MAX_UNDO: usize = 256;
+
+#[derive(Clone, Copy, PartialEq)]
+enum EditKind {
+    /// single-char typing — coalesces into one undo step
+    Insert,
+    /// backspace/delete of single chars — coalesces into one undo step
+    Delete,
+    /// a discrete edit (paste, newline, word-delete, selection-replace, a
+    /// cursor move, undo/redo) that never coalesces with its neighbours
+    Other,
+}
+
+/// A point-in-time buffer state for undo/redo. Cloning a `Rope` is cheap — it
+/// shares structure via Arc — so snapshots cost next to nothing.
+#[derive(Clone)]
+struct Snapshot {
+    rope: Rope,
+    cursor: usize,
+    anchor: Option<usize>,
+}
+
 pub struct Editor {
     pub rope: Rope,
     /// cursor as a char index into the rope (never inside a CRLF pair — we
@@ -23,6 +46,10 @@ pub struct Editor {
     pub dirty: bool,
     /// preferred column for vertical movement (sticky col)
     goal_col: Option<usize>,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    /// kind of the last mutating edit, for undo coalescing
+    last_edit: EditKind,
 }
 
 impl Editor {
@@ -33,6 +60,9 @@ impl Editor {
             anchor: None,
             dirty: false,
             goal_col: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_edit: EditKind::Other,
         }
     }
 
@@ -99,12 +129,102 @@ impl Editor {
         } else {
             self.anchor = None;
         }
+        // a cursor move ends the current typing/delete run, so the next edit
+        // starts a fresh undo step
+        self.last_edit = EditKind::Other;
     }
 
     pub fn select_all(&mut self) {
         self.anchor = Some(0);
         self.cursor = self.rope.len_chars();
         self.goal_col = None;
+    }
+
+    /// Select the word under the cursor (double-click). Falls back to the single
+    /// char if the cursor isn't sitting on a word character.
+    pub fn select_word_at_cursor(&mut self) {
+        let len = self.rope.len_chars();
+        let mut s = self.cursor;
+        while s > 0 && self.char_at(s - 1).is_some_and(Self::is_word) {
+            s -= 1;
+        }
+        let mut e = self.cursor;
+        while e < len && self.char_at(e).is_some_and(Self::is_word) {
+            e += 1;
+        }
+        if s == e {
+            // not on a word char → select the single char under the cursor
+            e = (self.cursor + 1).min(len);
+            s = self.cursor.min(e);
+        }
+        self.anchor = Some(s);
+        self.cursor = e;
+        self.goal_col = None;
+        self.last_edit = EditKind::Other;
+    }
+
+    /// Select the whole line under the cursor, including its trailing newline
+    /// (triple-click).
+    pub fn select_line_at_cursor(&mut self) {
+        let (line, _) = self.line_col();
+        let start = self.rope.line_to_char(line);
+        let end = if line + 1 < self.rope.len_lines() {
+            self.rope.line_to_char(line + 1)
+        } else {
+            self.rope.len_chars()
+        };
+        self.anchor = Some(start);
+        self.cursor = end;
+        self.goal_col = None;
+        self.last_edit = EditKind::Other;
+    }
+
+    // ── undo / redo ────────────────────────────────────────────────────────
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            rope: self.rope.clone(),
+            cursor: self.cursor,
+            anchor: self.anchor,
+        }
+    }
+
+    /// Record the pre-edit state for undo. Consecutive edits of the same
+    /// coalescing kind (a run of typing, or a run of deletes) fold into one undo
+    /// step; `Other` always starts a fresh step. Any edit clears the redo stack.
+    fn checkpoint(&mut self, kind: EditKind) {
+        let coalesce = kind != EditKind::Other && self.last_edit == kind && !self.undo.is_empty();
+        if !coalesce {
+            self.undo.push(self.snapshot());
+            if self.undo.len() > MAX_UNDO {
+                self.undo.remove(0);
+            }
+        }
+        self.redo.clear();
+        self.last_edit = kind;
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(prev) = self.undo.pop() {
+            self.redo.push(self.snapshot());
+            self.restore(prev);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(next) = self.redo.pop() {
+            self.undo.push(self.snapshot());
+            self.restore(next);
+        }
+    }
+
+    fn restore(&mut self, s: Snapshot) {
+        self.rope = s.rope;
+        self.cursor = s.cursor;
+        self.anchor = s.anchor;
+        self.dirty = true;
+        self.goal_col = None;
+        self.last_edit = EditKind::Other;
     }
 
     fn char_at(&self, i: usize) -> Option<char> {
@@ -118,6 +238,17 @@ impl Editor {
     // ── editing (selection-aware) ─────────────────────────────────────────
 
     pub fn insert(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        // single-char typing coalesces; replacing a selection, newlines, and
+        // multi-char inserts (paste) are each their own undo step
+        let kind = if self.selection().is_some() || s == "\n" || s.chars().count() > 1 {
+            EditKind::Other
+        } else {
+            EditKind::Insert
+        };
+        self.checkpoint(kind);
         self.delete_selection();
         self.rope.insert(self.cursor, s);
         self.cursor += s.chars().count();
@@ -126,30 +257,48 @@ impl Editor {
     }
 
     pub fn backspace(&mut self) {
+        let has_sel = self.selection().is_some();
+        if !has_sel && self.cursor == 0 {
+            return; // nothing to delete → no undo step
+        }
+        self.checkpoint(if has_sel {
+            EditKind::Other
+        } else {
+            EditKind::Delete
+        });
         if self.delete_selection() {
             return;
         }
-        if self.cursor > 0 {
-            self.rope.remove(self.cursor - 1..self.cursor);
-            self.cursor -= 1;
-            self.dirty = true;
-        }
+        self.rope.remove(self.cursor - 1..self.cursor);
+        self.cursor -= 1;
+        self.dirty = true;
         self.goal_col = None;
     }
 
     pub fn delete(&mut self) {
+        let has_sel = self.selection().is_some();
+        if !has_sel && self.cursor >= self.rope.len_chars() {
+            return; // nothing to delete → no undo step
+        }
+        self.checkpoint(if has_sel {
+            EditKind::Other
+        } else {
+            EditKind::Delete
+        });
         if self.delete_selection() {
             return;
         }
-        if self.cursor < self.rope.len_chars() {
-            self.rope.remove(self.cursor..self.cursor + 1);
-            self.dirty = true;
-        }
+        self.rope.remove(self.cursor..self.cursor + 1);
+        self.dirty = true;
         self.goal_col = None;
     }
 
     /// Ctrl+Backspace: delete the word to the left (or the selection).
     pub fn delete_word_left(&mut self) {
+        if self.selection().is_none() && self.cursor == 0 {
+            return;
+        }
+        self.checkpoint(EditKind::Other);
         if self.delete_selection() {
             return;
         }
@@ -164,6 +313,10 @@ impl Editor {
 
     /// Ctrl+Delete: delete the word to the right (or the selection).
     pub fn delete_word_right(&mut self) {
+        if self.selection().is_none() && self.cursor >= self.rope.len_chars() {
+            return;
+        }
+        self.checkpoint(EditKind::Other);
         if self.delete_selection() {
             return;
         }
@@ -409,5 +562,68 @@ mod tests {
         assert_eq!(e.cursor, e.rope.len_chars());
         e.doc_start(true); // select to top
         assert_eq!(e.selection(), Some(0..5));
+    }
+
+    #[test]
+    fn undo_redo_roundtrips_typing() {
+        let mut e = Editor::new("");
+        e.insert("a");
+        e.insert("b");
+        e.insert("c"); // a run of typing → one undo step
+        assert_eq!(e.text(), "abc");
+        e.undo();
+        assert_eq!(e.text(), "", "one undo removes the whole typing run");
+        e.redo();
+        assert_eq!(e.text(), "abc", "redo restores it");
+    }
+
+    #[test]
+    fn cursor_move_splits_undo_runs() {
+        let mut e = Editor::new("");
+        e.insert("foo");
+        e.left(false); // a move ends the run
+        e.insert("X");
+        assert_eq!(e.text(), "foXo");
+        e.undo();
+        assert_eq!(e.text(), "foo", "first undo drops only the post-move edit");
+        e.undo();
+        assert_eq!(e.text(), "", "second undo drops the earlier run");
+    }
+
+    #[test]
+    fn undo_restores_a_replaced_selection() {
+        let mut e = Editor::new("hello world");
+        e.select_all();
+        e.insert("hi");
+        assert_eq!(e.text(), "hi");
+        e.undo();
+        assert_eq!(e.text(), "hello world", "the replaced text comes back");
+    }
+
+    #[test]
+    fn redo_stack_clears_on_new_edit() {
+        let mut e = Editor::new("");
+        e.insert("a");
+        e.undo();
+        assert_eq!(e.text(), "");
+        e.insert("b"); // a fresh edit invalidates the redo of "a"
+        e.redo();
+        assert_eq!(e.text(), "b", "redo is a no-op after a new edit");
+    }
+
+    #[test]
+    fn double_click_selects_the_word() {
+        let mut e = Editor::new("foo bar baz");
+        e.set_cursor(0, 5, false); // inside "bar"
+        e.select_word_at_cursor();
+        assert_eq!(e.selected_text().as_deref(), Some("bar"));
+    }
+
+    #[test]
+    fn triple_click_selects_the_line() {
+        let mut e = Editor::new("one\ntwo\nthree");
+        e.set_cursor(1, 1, false); // on the "two" line
+        e.select_line_at_cursor();
+        assert_eq!(e.selected_text().as_deref(), Some("two\n"));
     }
 }

@@ -1270,6 +1270,12 @@ impl Workspace {
     /// that still exist are restored; already-open files are skipped (dedupe).
     fn restore_session(&mut self, cx: &mut Context<Self>) {
         let s = session::load();
+        // restore the global look first so chrome + panes render in the saved
+        // theme from frame one
+        if let Some(outer) = s.outer {
+            self.outer = outer;
+            self.rebuild_outer(cx);
+        }
         for e in s.tabs {
             let p = PathBuf::from(&e.path);
             if !p.exists() {
@@ -1313,7 +1319,9 @@ impl Workspace {
     /// A cheap fingerprint of the open-file set + active tab — autosave only
     /// writes the session when this changes.
     fn session_signature(&self, cx: &App) -> String {
-        let mut s = format!("{}|", self.active);
+        // include the outer appearance so a theme/seed/texture change triggers a
+        // persist even when the open-file set is unchanged
+        let mut s = format!("{}|{:?}|", self.active, self.outer);
         for t in &self.tabs {
             if let Some(p) = t.doc.read(cx).path.as_ref() {
                 s.push_str(&p.to_string_lossy());
@@ -1339,7 +1347,11 @@ impl Workspace {
                 });
             }
         }
-        session::save(&session::Session { active, tabs });
+        session::save(&session::Session {
+            active,
+            tabs,
+            outer: Some(self.outer.clone()),
+        });
     }
 
     /// Background loop: every 2s, persist the session iff the open-file set

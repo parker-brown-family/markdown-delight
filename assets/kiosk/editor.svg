@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" fill="none">
+  <!-- old CRT monitor = markdown-delight, glowing phosphor green -->
+  <defs>
+    <radialGradient id="ph" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#0f3b22"/><stop offset="100%" stop-color="#04130b"/>
+    </radialGradient>
+  </defs>
+  <!-- glow halo -->
+  <ellipse cx="110" cy="96" rx="98" ry="78" fill="#36ff86" opacity="0.16"/>
+  <!-- chunky beige-green bezel -->
+  <rect x="26" y="30" width="168" height="132" rx="18" fill="#173024" stroke="#0c1a13" stroke-width="6"/>
+  <rect x="26" y="30" width="168" height="132" rx="18" fill="none" stroke="#2f5a40" stroke-width="2"/>
+  <!-- curved CRT glass -->
+  <rect x="42" y="44" width="136" height="104" rx="22" fill="url(#ph)" stroke="#000" stroke-width="3"/>
+  <!-- screen content: title + a comment band -->
+  <g font-family="ui-monospace,monospace" fill="#7dffa0">
+    <text x="56" y="70" font-size="13" font-weight="800" fill="#36ff86"># report.md</text>
+    <rect x="55" y="80" width="110" height="14" rx="3" fill="#36ff86" opacity="0.18"/>
+    <text x="58" y="91" font-size="10">the sky is green</text>
+    <text x="56" y="112" font-size="10" fill="#9affba">&gt; 💬 fix this →</text>
+    <text x="56" y="128" font-size="10" fill="#4f9f6c">native render · no webview</text>
+  </g>
+  <!-- scanlines -->
+  <g stroke="#02160c" stroke-width="1.4" opacity="0.5">
+    <path d="M44 56 h132 M44 64 h132 M44 72 h132 M44 80 h132 M44 88 h132 M44 96 h132 M44 104 h132 M44 112 h132 M44 120 h132 M44 128 h132 M44 136 h132"/>
+  </g>
+  <!-- glass sheen -->
+  <path d="M50 50 q 40 6 70 0 q -10 18 -54 22 q -18 -10 -16 -22z" fill="#ffffff" opacity="0.07"/>
+  <!-- stand + feet -->
+  <path d="M96 162 h28 l6 16 h-40z" fill="#173024" stroke="#0c1a13" stroke-width="5" stroke-linejoin="round"/>
+  <rect x="74" y="178" width="72" height="10" rx="5" fill="#173024" stroke="#0c1a13" stroke-width="5"/>
+  <!-- power LED -->
+  <circle cx="178" cy="150" r="4" fill="#36ff86"/>
+</svg>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" fill="none">
+  <!-- cartoon agent robot with a BIG hungry chomping mouth (eats the paste) -->
+  <ellipse cx="110" cy="116" rx="92" ry="80" fill="#36ff86" opacity="0.12"/>
+  <!-- antenna -->
+  <path d="M110 26 V 48" stroke="#1c2a20" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="110" cy="22" r="8" fill="#ff6b6b" stroke="#1c2a20" stroke-width="4"/>
+  <!-- head/body -->
+  <rect x="40" y="48" width="140" height="138" rx="26" fill="#2a3a30" stroke="#0c1a13" stroke-width="7"/>
+  <rect x="40" y="48" width="140" height="138" rx="26" fill="none" stroke="#3f7a55" stroke-width="2"/>
+  <!-- bolts -->
+  <circle cx="56" cy="64" r="4" fill="#7dffa0"/><circle cx="164" cy="64" r="4" fill="#7dffa0"/>
+  <!-- big goofy eyes -->
+  <circle cx="84" cy="86" r="18" fill="#04130b" stroke="#7dffa0" stroke-width="4"/>
+  <circle cx="136" cy="86" r="18" fill="#04130b" stroke="#7dffa0" stroke-width="4"/>
+  <circle cx="88" cy="82" r="6" fill="#36ff86"/><circle cx="140" cy="82" r="6" fill="#36ff86"/>
+  <!-- BIG hungry chomping mouth, wide open -->
+  <path d="M58 124 H162 V150 Q110 196 58 150 Z" fill="#0a0502" stroke="#0c1a13" stroke-width="6" stroke-linejoin="round"/>
+  <!-- top teeth -->
+  <path d="M66 124 l8 16 l8 -16 l8 16 l8 -16 l8 16 l8 -16 l8 16 l8 -16 l8 16 l8 -16" fill="#f4fff7" stroke="#0c1a13" stroke-width="2"/>
+  <!-- a paste-bite: a little page going IN -->
+  <g transform="rotate(18 110 116)">
+    <rect x="96" y="96" width="28" height="34" rx="3" fill="#f4fff7" stroke="#1c2a20" stroke-width="3"/>
+    <path d="M102 106 h16 M102 113 h16 M102 120 h10" stroke="#36c46a" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+  <!-- side feet -->
+  <rect x="62" y="186" width="30" height="16" rx="6" fill="#2a3a30" stroke="#0c1a13" stroke-width="5"/>
+  <rect x="128" y="186" width="30" height="16" rx="6" fill="#2a3a30" stroke="#0c1a13" stroke-width="5"/>
+</svg>

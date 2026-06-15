@@ -142,6 +142,8 @@ pub struct MdPane {
     text_dragging: bool,
     /// the "all comments" browser overlay is open
     show_browser: bool,
+    /// the keys-&-tips help modal is open (F1 / Ctrl+/)
+    show_help: bool,
     /// transient confirmation pill (e.g. after "copy with comments"); cleared by
     /// the fx clock after `toast_ticks` frames
     toast: Option<SharedString>,
@@ -210,6 +212,7 @@ impl MdPane {
             sel_dragging: false,
             text_dragging: false,
             show_browser: false,
+            show_help: false,
             toast: None,
             toast_ticks: 0,
             author: comments::default_author(),
@@ -364,6 +367,18 @@ impl MdPane {
         // the comment composer owns the keyboard while the device panel is open
         if self.comment_ui.is_some() {
             self.comment_panel_key(ks, cx);
+            return;
+        }
+
+        // The F1 / Ctrl+/ toggle is handled at the Workspace level so it works
+        // regardless of which pane (if any) holds focus. Here we only enforce the
+        // modal: while help is open Esc closes it and every other key is swallowed
+        // so nothing edits behind it.
+        if self.show_help {
+            if key == "escape" {
+                self.show_help = false;
+                cx.notify();
+            }
             return;
         }
 
@@ -900,6 +915,12 @@ impl MdPane {
         cx.notify();
     }
 
+    /// Toggle the keys-&-tips help modal (driven by the Workspace-level F1 / Ctrl+/).
+    pub fn toggle_help(&mut self, cx: &mut Context<Self>) {
+        self.show_help = !self.show_help;
+        cx.notify();
+    }
+
     /// Show a transient confirmation pill for ~2.6s (aged out by the fx clock).
     fn flash(&mut self, msg: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.toast = Some(msg.into());
@@ -1330,6 +1351,185 @@ impl MdPane {
     /// The "all comments" browser: every thread for this doc, with a distinct
     /// Deprecated section for orphaned anchors (delete or let them auto-revive
     /// if the text returns). Export lives in its titlebar.
+    /// The themed keys-&-tips help modal (F1 / Ctrl+/). Inherits the pane's
+    /// effective theme — same scrim + centered device-panel pattern as the browser.
+    fn render_help(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.show_help {
+            return None;
+        }
+        // one "key — description" line
+        let row = |k: &str, d: &str| {
+            div()
+                .flex()
+                .flex_row()
+                .gap_3()
+                .items_baseline()
+                .child(
+                    div()
+                        .flex_none()
+                        .min_w(px(148.))
+                        .text_color(th.accent)
+                        .text_size(px(11.5))
+                        .child(SharedString::from(k.to_string())),
+                )
+                .child(
+                    // flex + min_w_0 so a long description wraps inside the column
+                    // instead of overflowing (and clipping) the panel
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(th.text.alpha(0.9))
+                        .text_size(px(11.5))
+                        .child(SharedString::from(d.to_string())),
+                )
+        };
+        let head = |t: &str| {
+            div()
+                .mt_2()
+                .mb_1()
+                .text_color(th.frame_faint)
+                .text_size(px(10.))
+                .child(SharedString::from(format!("// {t}")))
+        };
+
+        let col_a = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(head("EDIT"))
+            .child(row("Ctrl+Z", "undo"))
+            .child(row("Ctrl+Shift+Z · Ctrl+Y", "redo"))
+            .child(row("Ctrl+C · X · V", "copy · cut · paste"))
+            .child(row("Ctrl+A", "select all"))
+            .child(row("Ctrl+⌫ · Ctrl+Del", "delete word left · right"))
+            .child(head("SELECT"))
+            .child(row("Shift+← → ↑ ↓", "extend selection"))
+            .child(row("Ctrl+Shift+← →", "select by word"))
+            .child(row("Shift+Home · End", "select to line edge"))
+            .child(row("Ctrl+Shift+Home·End", "select to doc top · bottom"))
+            .child(row("2× · 3× click", "select word · line"))
+            .child(row("shift-click", "extend selection to click"))
+            .child(head("MOVE"))
+            .child(row("Ctrl+← →", "jump by word"))
+            .child(row("Home · End", "line start · end"))
+            .child(row("Ctrl+Home · End", "document top · bottom"))
+            .child(row("Ctrl+P", "find / open file"));
+
+        let col_b = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(head("FILES & TABS"))
+            .child(row("Ctrl+S", "save"))
+            .child(row("Ctrl+Shift+T", "new tab"))
+            .child(row("Ctrl+W", "close tab / pane"))
+            .child(row("Ctrl+PgUp · PgDn", "previous · next tab"))
+            .child(row("Ctrl+Alt+M", "quick scratch-pad window"))
+            .child(head("PANES & VIEW"))
+            .child(row("Ctrl+Alt+R · D", "split right · down"))
+            .child(row("Alt+← → ↑ ↓", "focus another pane"))
+            .child(row("Ctrl+E", "toggle source / preview"))
+            .child(head("COMMENTS"))
+            .child(row("Ctrl+Shift+C", "comment mode"))
+            .child(row("Ctrl+Shift+A", "all-comments browser"))
+            .child(row("Ctrl+Shift+E", "★ copy with comments"))
+            .child(head("HELP"))
+            .child(row("F1 · Ctrl+/", "this panel"));
+
+        let tip = |t: &str| {
+            div()
+                .text_color(th.text.alpha(0.8))
+                .text_size(px(11.))
+                .child(SharedString::from(t.to_string()))
+        };
+        let tips = div()
+            .mt_3()
+            .pt_2()
+            .border_t_1()
+            .border_color(th.frame_border.alpha(0.3))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_color(th.frame_faint)
+                    .text_size(px(10.))
+                    .child("// TIPS"),
+            )
+            .child(tip(
+                "• In comment mode, drag a phrase to comment on that exact span.",
+            ))
+            .child(tip(
+                "• “Copy with comments” returns the whole doc with your notes inline — paste it straight back to your agent.",
+            ))
+            .child(tip(
+                "• Themes hot-reload from ~/.config/markdown-delight/theme.toml while the app runs.",
+            ));
+
+        let titlebar = div()
+            .flex()
+            .flex_row()
+            .justify_between()
+            .items_center()
+            .child(
+                div()
+                    .text_color(th.accent)
+                    .text_size(px(13.))
+                    .child("⌨  markdown-delight — keys & tips"),
+            )
+            .child(
+                div()
+                    .text_color(th.frame_faint)
+                    .text_size(px(10.))
+                    .child("Esc / F1 to close"),
+            );
+
+        let panel = comment_ui::device_panel(th)
+            .id("help-panel")
+            .w(px(760.))
+            .max_h(px(600.))
+            .p_5()
+            .border_2()
+            .border_color(th.accent.alpha(0.75))
+            .overflow_y_scroll()
+            .child(titlebar)
+            .child(
+                div()
+                    .mt_2()
+                    .flex()
+                    .flex_row()
+                    .gap(px(28.))
+                    .child(col_a)
+                    .child(col_b),
+            )
+            .child(tips)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
+            );
+
+        let overlay = div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(hsla(0., 0., 0., 0.5))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|pane, _: &MouseDownEvent, _w, cx| {
+                    pane.show_help = false;
+                    cx.notify();
+                }),
+            )
+            .child(panel);
+        Some(overlay.into_any_element())
+    }
+
     fn render_browser(&self, th: &theme::Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.show_browser {
             return None;
@@ -1997,8 +2197,10 @@ impl Render for MdPane {
             )
             // transient confirmation pill (e.g. "✓ Copied document + 3 comments")
             .when_some(self.toast.clone(), |el, msg| el.child(toast_pill(&th, msg)));
-        // the comment "device" panel / browser floats over the tube
-        if let Some(panel) = self.render_comment_panel(&th, cx) {
+        // the help modal floats above everything; then the comment panel / browser
+        if let Some(help) = self.render_help(&th, cx) {
+            root.child(help)
+        } else if let Some(panel) = self.render_comment_panel(&th, cx) {
             root.child(panel)
         } else if let Some(browser) = self.render_browser(&th, cx) {
             root.child(browser)

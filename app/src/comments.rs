@@ -236,6 +236,139 @@ pub fn export_sidecar(doc_path: &Path, store: &CommentStore) -> std::io::Result<
     Ok(side)
 }
 
+// ── "copy with comments": the agent-facing review artifact ──────────────────
+
+/// Resolve a thread's anchor to its current block index (mirrors `reanchor`'s
+/// fingerprint-then-ordinal logic).
+fn block_index_for(meta: &[BlockMeta], a: &Anchor) -> Option<usize> {
+    let same: Vec<usize> = meta
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.fp == a.block_fp)
+        .map(|(i, _)| i)
+        .collect();
+    same.get(a.block_ord)
+        .copied()
+        .or_else(|| same.first().copied())
+}
+
+/// A one-line, length-capped form of an anchor's quote (for "on …" headers).
+fn short_quote(quote: &str) -> Option<String> {
+    let q = quote.split_whitespace().collect::<Vec<_>>().join(" ");
+    if q.is_empty() {
+        return None;
+    }
+    Some(if q.chars().count() > 80 {
+        format!("{}…", q.chars().take(80).collect::<String>())
+    } else {
+        q
+    })
+}
+
+/// Render one thread as a Markdown blockquote callout (no trailing newline).
+fn render_thread(t: &Thread, orphan: bool) -> String {
+    let author = t
+        .comments
+        .first()
+        .map(|c| c.author.as_str())
+        .unwrap_or("reviewer");
+    let mut tags = String::new();
+    if t.resolved {
+        tags.push_str(" ✓ resolved");
+    }
+    if orphan {
+        tags.push_str(" ⚠ orphaned");
+    }
+    // a range comment (or any orphan) names the text it referred to
+    let on = if t.anchor.is_range() || orphan {
+        short_quote(&t.anchor.quote).map(|q| format!(" on “{q}”"))
+    } else {
+        None
+    };
+
+    let mut lines: Vec<String> = vec![format!(
+        "💬 **{author}**{}{}:",
+        on.unwrap_or_default(),
+        tags
+    )];
+    for (i, c) in t.comments.iter().enumerate() {
+        if i > 0 {
+            lines.push(String::new()); // blank line between replies
+            lines.push(format!("↳ **{}**:", c.author));
+        }
+        for l in c.body.lines() {
+            lines.push(l.to_string());
+        }
+    }
+    lines
+        .iter()
+        .map(|l| {
+            if l.is_empty() {
+                ">".into()
+            } else {
+                format!("> {l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Build **"the document, with my comments"** — the original markdown verbatim,
+/// with every live thread injected as a `> 💬` blockquote right after the block
+/// it annotates (range comments quote the exact span). Threads whose anchored
+/// text was edited away are appended in a trailing section so no feedback is ever
+/// lost. A leading HTML comment tells the receiving agent what it's looking at.
+pub fn review_markdown(source: &str, meta: &[BlockMeta], store: &CommentStore) -> String {
+    let live: Vec<&Thread> = store.threads.iter().filter(|t| !t.deprecated).collect();
+
+    // bucket threads by target block (BTreeMap → ascending byte order)
+    let mut per_block: std::collections::BTreeMap<usize, Vec<&Thread>> = Default::default();
+    let mut orphans: Vec<&Thread> = Vec::new();
+    for t in &live {
+        match block_index_for(meta, &t.anchor) {
+            Some(i) => per_block.entry(i).or_default().push(t),
+            None => orphans.push(t),
+        }
+    }
+
+    let n = live.len();
+    let mut out = format!(
+        "<!-- markdown-delight review: {n} inline comment{} below, each a \"> 💬\" \
+blockquote placed right after the section it refers to. The document is otherwise \
+verbatim. -->\n\n",
+        if n == 1 { "" } else { "s" }
+    );
+
+    // splice callouts in at each annotated block's end-of-source position
+    let mut cursor = 0usize;
+    for (i, threads) in &per_block {
+        let pos = meta[*i].src.end.min(source.len()).max(cursor);
+        out.push_str(&source[cursor..pos]);
+        // blank line, the callouts (one per thread), blank line — valid md block
+        out.push('\n');
+        for t in threads {
+            out.push_str(&render_thread(t, false));
+            out.push_str("\n\n");
+        }
+        cursor = pos;
+    }
+    out.push_str(&source[cursor..]);
+
+    if !orphans.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(
+            "\n---\n\n<!-- Comments whose anchored text was edited away — kept for reference. -->\n\n",
+        );
+        for t in &orphans {
+            out.push_str(&render_thread(t, true));
+            out.push_str("\n\n");
+        }
+    }
+    out
+}
+
 // ── store ──────────────────────────────────────────────────────────────────
 
 impl CommentStore {
@@ -521,5 +654,61 @@ mod tests {
         let t = store.thread(&tid).unwrap();
         assert!(!t.deprecated);
         assert_eq!(t.anchor.range, Some((7, 12))); // "quick" at new offset
+    }
+
+    #[test]
+    fn review_injects_comment_after_its_block() {
+        let src = "# Report\n\nThe sky is green.\n\nDone.\n";
+        let (_, meta) = crate::render::parse_with_meta(src);
+        let i = meta.iter().position(|m| m.plain.contains("sky")).unwrap();
+        let mut store = CommentStore::default();
+        store.new_thread(
+            Anchor::whole_block(meta[i].fp, 0, meta[i].plain.clone()),
+            "Parker".into(),
+            "should be blue".into(),
+        );
+        let out = review_markdown(src, &meta, &store);
+        assert!(out.contains("The sky is green."), "original kept verbatim");
+        assert!(out.contains("> 💬 **Parker**"), "comment injected");
+        // the callout sits between its block and the next one
+        let sky = out.find("sky is green").unwrap();
+        let cmt = out.find("should be blue").unwrap();
+        let done = out.find("Done.").unwrap();
+        assert!(
+            sky < cmt && cmt < done,
+            "comment between its block and next"
+        );
+    }
+
+    #[test]
+    fn review_quotes_the_span_for_range_comments() {
+        let src = "Alpha beta gamma.\n";
+        let (_, meta) = crate::render::parse_with_meta(src);
+        let mut store = CommentStore::default();
+        store.new_thread(
+            Anchor::span(meta[0].fp, 0, (6, 10), "beta".into()),
+            "P".into(),
+            "word choice".into(),
+        );
+        let out = review_markdown(src, &meta, &store);
+        assert!(out.contains("on “beta”"), "range comment quotes its span");
+        assert!(out.contains("> word choice"));
+    }
+
+    #[test]
+    fn review_keeps_orphaned_comments_in_a_trailing_section() {
+        let src = "Only line.\n";
+        let (_, meta) = crate::render::parse_with_meta(src);
+        let mut store = CommentStore::default();
+        // anchor to a block that doesn't exist in meta → orphan
+        store.new_thread(
+            Anchor::whole_block(99, 0, "vanished text".into()),
+            "P".into(),
+            "still matters".into(),
+        );
+        let out = review_markdown(src, &meta, &store);
+        assert!(out.contains("Only line."), "doc kept");
+        assert!(out.contains("orphaned"), "orphan section present");
+        assert!(out.contains("still matters"), "orphan comment retained");
     }
 }

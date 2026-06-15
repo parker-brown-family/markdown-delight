@@ -142,6 +142,10 @@ pub struct MdPane {
     text_dragging: bool,
     /// the "all comments" browser overlay is open
     show_browser: bool,
+    /// transient confirmation pill (e.g. after "copy with comments"); cleared by
+    /// the fx clock after `toast_ticks` frames
+    toast: Option<SharedString>,
+    toast_ticks: u16,
     /// comment author for this session (git user.name → $USER → anon)
     author: String,
     pub closed: bool,
@@ -180,6 +184,14 @@ impl MdPane {
                     if pane.fx.tick(&th) {
                         cx.notify();
                     }
+                    // age out a transient toast
+                    if pane.toast_ticks > 0 {
+                        pane.toast_ticks -= 1;
+                        if pane.toast_ticks == 0 {
+                            pane.toast = None;
+                        }
+                        cx.notify();
+                    }
                     true
                 })
                 .unwrap_or(false)
@@ -198,6 +210,8 @@ impl MdPane {
             sel_dragging: false,
             text_dragging: false,
             show_browser: false,
+            toast: None,
+            toast_ticks: 0,
             author: comments::default_author(),
             closed: false,
             appearance,
@@ -372,6 +386,12 @@ impl MdPane {
         // ctrl+shift+a opens the all-comments browser (mirrors ≡ comments)
         if m.control && m.shift && !m.alt && key == "a" {
             self.toggle_comment_browser(cx);
+            return;
+        }
+        // ctrl+shift+e → copy the document with comments injected (works in any
+        // mode — it reads the doc + its comment store)
+        if m.control && m.shift && !m.alt && key == "e" {
+            self.copy_with_comments(cx);
             return;
         }
         // only the source editor consumes typing / selection keys
@@ -878,6 +898,39 @@ impl MdPane {
             doc.save_comments();
         });
         cx.notify();
+    }
+
+    /// Show a transient confirmation pill for ~2.6s (aged out by the fx clock).
+    fn flash(&mut self, msg: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.toast = Some(msg.into());
+        self.toast_ticks = 80;
+        cx.notify();
+    }
+
+    /// THE feature: copy the whole document to the clipboard with every comment
+    /// injected as a `> 💬` blockquote right after the section it annotates — the
+    /// artifact you hand straight back to your coding agent. See
+    /// `comments::review_markdown`.
+    fn copy_with_comments(&mut self, cx: &mut Context<Self>) {
+        self.doc.update(cx, |doc, _| doc.ensure_comments_loaded());
+        let (md, n) = {
+            let doc = self.doc.read(cx);
+            let src = doc.editor.text();
+            let n = doc
+                .comments
+                .threads
+                .iter()
+                .filter(|t| !t.deprecated)
+                .count();
+            (comments::review_markdown(&src, &doc.meta, &doc.comments), n)
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(md));
+        let msg = match n {
+            0 => "Copied — document only (no comments yet)".to_string(),
+            1 => "✓ Copied document + 1 comment".to_string(),
+            _ => format!("✓ Copied document + {n} comments"),
+        };
+        self.flash(msg, cx);
     }
 
     /// Export comments to a sidecar beside the doc, guarded by .git/info/exclude
@@ -1482,6 +1535,16 @@ impl MdPane {
                     .items_center()
                     .gap_2()
                     .child(
+                        comment_ui::device_button(th, "⧉ copy with comments", true).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|pane, _: &MouseDownEvent, _w, cx| {
+                                pane.copy_with_comments(cx);
+                                pane.show_browser = false;
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(
                         comment_ui::device_button(th, "⤓ export", false).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|pane, _: &MouseDownEvent, _w, cx| {
@@ -1618,6 +1681,30 @@ impl MdPane {
 /// Byte offset of the `col`-th char in `s` (its full length if past the last).
 fn col_byte(s: &str, col: usize) -> usize {
     s.char_indices().nth(col).map(|(b, _)| b).unwrap_or(s.len())
+}
+
+/// A centered toast pill floated at the bottom of the tube (transient feedback).
+fn toast_pill(th: &theme::Theme, msg: SharedString) -> gpui::Div {
+    div()
+        .absolute()
+        .bottom(px(20.))
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .px_4()
+                .py_2()
+                .rounded_lg()
+                .bg(th.frame_bg)
+                .border_1()
+                .border_color(th.accent.alpha(0.6))
+                .text_color(th.accent)
+                .text_size(px(12.5))
+                .shadow(vec![glow(th.accent.alpha(0.5), 18.)])
+                .child(msg),
+        )
 }
 
 /// A soft, spreadless outer glow of the given colour/blur — the "commented" cue.
@@ -1907,7 +1994,9 @@ impl Render for MdPane {
                     .flex_row()
                     .child(rail)
                     .child(tube),
-            );
+            )
+            // transient confirmation pill (e.g. "✓ Copied document + 3 comments")
+            .when_some(self.toast.clone(), |el, msg| el.child(toast_pill(&th, msg)));
         // the comment "device" panel / browser floats over the tube
         if let Some(panel) = self.render_comment_panel(&th, cx) {
             root.child(panel)

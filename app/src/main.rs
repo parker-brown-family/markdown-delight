@@ -2058,6 +2058,17 @@ impl Workspace {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        if ev.pressed_button != Some(MouseButton::Left) {
+            // Button is up. If a release happened OUTSIDE the window, on_mouse_up
+            // never fired, so a drag flag can stick "on" and the tracking bar /
+            // split divider would re-grab the cursor on the next move. Clear it.
+            if self.font_drag || self.drag_split.is_some() {
+                self.font_drag = false;
+                self.drag_split = None;
+                cx.notify();
+            }
+            return;
+        }
         if ev.pressed_button == Some(MouseButton::Left) {
             if self.font_drag {
                 self.set_font_from_x(f32::from(ev.position.x), cx);

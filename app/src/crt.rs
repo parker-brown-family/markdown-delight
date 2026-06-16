@@ -14,6 +14,30 @@ use gpui::{
 
 use crate::theme::Theme;
 
+/// The five CRT dials [`Fx::tick`] consumes — `Copy`, alloc-free. The 30fps
+/// ticker builds one of these per pane each frame instead of composing a whole
+/// `Theme` (a heap-cloning operation) just to read the animation rates.
+#[derive(Clone, Copy)]
+pub struct AnimDials {
+    pub tracking: f32,
+    pub tracking_period: f32,
+    pub tracking_sweep: f32,
+    pub flicker: f32,
+    pub jiggle: f32,
+}
+
+impl AnimDials {
+    pub fn from_theme(th: &Theme) -> Self {
+        Self {
+            tracking: th.tracking,
+            tracking_period: th.tracking_period,
+            tracking_sweep: th.tracking_sweep,
+            flicker: th.flicker,
+            jiggle: th.jiggle,
+        }
+    }
+}
+
 /// Animated state, advanced by the Workspace ticker.
 pub struct Fx {
     started: Instant,
@@ -63,7 +87,7 @@ impl Fx {
     }
 
     /// Advance; returns true if something visible changed (=> notify).
-    pub fn tick(&mut self, th: &Theme) -> bool {
+    pub fn tick(&mut self, th: AnimDials) -> bool {
         let t = self.started.elapsed().as_secs_f32();
         let mut changed = false;
 

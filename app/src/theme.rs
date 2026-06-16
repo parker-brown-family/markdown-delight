@@ -189,6 +189,16 @@ pub fn recolor(base: &Theme, seed: Hsla) -> Theme {
     t
 }
 
+/// Bumped whenever the theme registry / active theme changes (init + every
+/// theme.toml hot-reload). Panes key their composed-theme cache on this, so
+/// they can skip re-composing a Theme every frame yet still pick up a reload.
+static THEME_GEN: AtomicU32 = AtomicU32::new(0);
+
+/// Current theme generation — see [`THEME_GEN`].
+pub fn generation() -> u32 {
+    THEME_GEN.load(Ordering::Relaxed)
+}
+
 /// Look up a theme by name from the global registry (None → global active
 /// theme). The hot-reloaded `theme.toml` is kept in the registry under its own
 /// name (see `upsert_registry`), so resolving it by name returns the live copy.
@@ -205,6 +215,7 @@ pub fn resolve(cx: &App, name: Option<&str>) -> Arc<Theme> {
 /// Insert or replace a theme in the registry by name — keeps the registry the
 /// single source of truth for `resolve`, including the live hot-reloaded theme.
 fn upsert_registry(cx: &mut App, t: Arc<Theme>) {
+    THEME_GEN.fetch_add(1, Ordering::Relaxed);
     if !cx.has_global::<ThemeRegistry>() {
         cx.set_global(ThemeRegistry(vec![t]));
         return;

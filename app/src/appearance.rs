@@ -368,6 +368,18 @@ impl PaneAppearance {
 
 // ── compose: resolved appearance → one rendered Theme ───────────────────────
 
+/// The five CRT animation dials for a pane WITHOUT composing/cloning a full
+/// `Theme`. The 30fps fx ticker calls this per pane each frame, so it stays
+/// cheap: resolve only the texture theme (an `Arc` clone) and copy the dials —
+/// no `Theme` clone, no recolor, no grade transforms.
+pub fn anim_dials(cx: &App, r: &Resolved) -> crate::crt::AnimDials {
+    let tex = match &r.texture.id {
+        Some(id) => theme::resolve(cx, Some(id)),
+        None => theme::resolve(cx, Some(&r.colour.id)),
+    };
+    crate::crt::AnimDials::from_theme(&tex)
+}
+
 /// Fold a resolved appearance into a single [`Theme`]: colour theme + seed,
 /// texture theme's effect dials, curve gating, and the grade baked into every
 /// colour. The renderer keeps using `Theme` fields unchanged. `text_scale` is

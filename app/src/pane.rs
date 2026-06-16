@@ -6,6 +6,7 @@
 //! mode for the first pane is SOURCE: right-click → open → start typing.
 
 use std::{
+    cell::RefCell,
     collections::{BTreeSet, HashMap},
     ops::Range,
     path::PathBuf,
@@ -14,10 +15,10 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, white,
-    AnyElement, Bounds, BoxShadow, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    FontWeight, HighlightStyle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, ScrollHandle, SharedString, StyledText, TextLayout, Window,
+    canvas, div, hsla, linear_color_stop, linear_gradient, point, prelude::*, px, uniform_list,
+    white, AnyElement, Bounds, BoxShadow, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    FontWeight, HighlightStyle, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, SharedString, StyledText, TextLayout, UniformListScrollHandle, Window,
 };
 
 use crate::{appearance, comment_ui, comments, crt, editor, render, theme, warp};
@@ -157,8 +158,18 @@ pub struct MdPane {
     pub appearance: appearance::PaneAppearance,
     focus_handle: FocusHandle,
     fx: crt::Fx,
-    scroll: ScrollHandle,
+    /// Source-mode scroll handle — a uniform_list so only the visible lines are
+    /// built each frame (not the whole file). Its `base_handle` carries the same
+    /// pixel offset the click→cursor math reads.
+    scroll: UniformListScrollHandle,
     tube_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// Memoized composed theme: recomposing clones a whole `Theme` (heap), so we
+    /// cache it keyed by (resolved appearance, theme generation) and only redo
+    /// the work when the look actually changes — not 30×/sec during animation.
+    theme_cache: RefCell<Option<(appearance::Resolved, u32, Arc<theme::Theme>)>>,
+    /// Last-seen window-active state (set in render). The fx ticker skips
+    /// repainting a pane whose window is in the background.
+    win_active: bool,
     doc_sub: gpui::Subscription,
 }
 
@@ -182,8 +193,10 @@ impl MdPane {
                     if pane.closed {
                         return false;
                     }
-                    let th = pane.effective_theme(cx);
-                    if pane.fx.tick(&th) {
+                    // advance animation off the cheap dials (no Theme clone);
+                    // skip the repaint when this pane's window is backgrounded.
+                    let dials = appearance::anim_dials(cx, &pane.resolved(cx));
+                    if pane.fx.tick(dials) && pane.win_active {
                         cx.notify();
                     }
                     // age out a transient toast
@@ -220,10 +233,22 @@ impl MdPane {
             appearance,
             focus_handle: cx.focus_handle(),
             fx: crt::Fx::new(seed),
-            scroll: ScrollHandle::new(),
+            scroll: UniformListScrollHandle::new(),
             tube_bounds: Arc::new(Mutex::new(None)),
+            theme_cache: RefCell::new(None),
+            win_active: true,
             doc_sub,
         }
+    }
+
+    /// Source-mode scroll offset (window-space), read from the uniform_list's
+    /// underlying handle — the click→cursor and rail-sync math use this.
+    fn scroll_offset(&self) -> gpui::Point<Pixels> {
+        self.scroll.0.borrow().base_handle.offset()
+    }
+
+    fn set_scroll_offset(&self, off: gpui::Point<Pixels>) {
+        self.scroll.0.borrow().base_handle.set_offset(off);
     }
 
     /// This pane's appearance, resolved against the workspace outer look —
@@ -234,9 +259,24 @@ impl MdPane {
 
     /// The theme this pane renders with: its four display-config groups composed
     /// into one `Theme` (colour + seed, texture's CRT dials, curve gate, grade
-    /// baked into the colours).
+    /// baked into the colours). Memoized — see [`Self::theme_for`].
     pub fn effective_theme(&self, cx: &gpui::App) -> Arc<theme::Theme> {
-        Arc::new(appearance::compose(cx, &self.resolved(cx)))
+        self.theme_for(cx, &self.resolved(cx))
+    }
+
+    /// Compose (or reuse) the theme for an already-resolved appearance. Cache hit
+    /// when neither the resolved look nor the theme generation changed — turning
+    /// a per-frame `Theme` clone + recolor + grade pass into an `Arc` bump.
+    fn theme_for(&self, cx: &gpui::App, r: &appearance::Resolved) -> Arc<theme::Theme> {
+        let gen = theme::generation();
+        if let Some((cr, cg, arc)) = self.theme_cache.borrow().as_ref() {
+            if *cg == gen && cr == r {
+                return arc.clone();
+            }
+        }
+        let arc = Arc::new(appearance::compose(cx, r));
+        *self.theme_cache.borrow_mut() = Some((r.clone(), gen, arc.clone()));
+        arc
     }
 
     /// Effective text scale for this pane: the workspace scrubber × this pane's
@@ -271,7 +311,7 @@ impl MdPane {
     pub fn set_doc(&mut self, doc: Entity<Doc>, cx: &mut Context<Self>) {
         self.doc_sub = cx.observe(&doc, |_, _, cx| cx.notify());
         self.doc = doc;
-        self.scroll.set_offset(point(px(0.), px(0.)));
+        self.set_scroll_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
@@ -285,14 +325,14 @@ impl MdPane {
         let line_h = LINE_H * self.eff_scale(cx);
         let (line, _) = self.doc.read(cx).editor.line_col();
         let cursor_y = PAD_Y + line as f32 * line_h;
-        let mut off = self.scroll.offset();
+        let mut off = self.scroll_offset();
         let visible_y = cursor_y + f32::from(off.y);
         if visible_y < line_h {
             off.y = px(-(cursor_y - line_h * 2.).max(0.));
-            self.scroll.set_offset(off);
+            self.set_scroll_offset(off);
         } else if visible_y > h - line_h * 2. {
             off.y = px(-(cursor_y - h + line_h * 3.));
-            self.scroll.set_offset(off);
+            self.set_scroll_offset(off);
         }
     }
 
@@ -302,7 +342,7 @@ impl MdPane {
         let Some(b) = *self.tube_bounds.lock().unwrap() else {
             return;
         };
-        let off = self.scroll.offset();
+        let off = self.scroll_offset();
         let sc = self.eff_scale(cx);
         // Follow the glass: a screen point inside a bent tube DISPLAYS content
         // sampled from warped(point), so a click must be pushed through the same
@@ -1800,85 +1840,88 @@ impl MdPane {
         Some(overlay.into_any_element())
     }
 
-    /// The source tube: every buffer line, with the selection band drawn across
-    /// it and — when nothing is selected — the inverse-video block cursor on the
-    /// active line.
-    fn source_lines(&self, th: &theme::Theme, cx: &gpui::App) -> Vec<AnyElement> {
-        let doc = self.doc.read(cx);
-        let e = &doc.editor;
-        let (cur_line, cur_col) = e.line_col();
-        let sel = e.selection();
-        let line_h = px(LINE_H * self.eff_scale(cx));
-        let sel_bg = th.accent.alpha(0.30);
-        let n_lines = e.line_count();
-        (0..n_lines)
-            .map(|i| {
-                let mut text = e.line(i);
-                let line = div().h(line_h).whitespace_nowrap();
-                let nchars = text.chars().count();
-                let line_start = e.rope.line_to_char(i);
-                let has_nl = i + 1 < n_lines;
-                let line_end = line_start + nchars + has_nl as usize;
+}
 
-                let mut highlights: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+/// Build ONE source line's element: the selection band drawn across it, or —
+/// when nothing is selected — the inverse-video block cursor on the active line.
+/// Called per visible line by the source `uniform_list` (so only on-screen lines
+/// are built each frame). Colours are passed in so it never composes a theme.
+#[allow(clippy::too_many_arguments)]
+fn source_line_el(
+    e: &editor::Editor,
+    i: usize,
+    n_lines: usize,
+    line_h: Pixels,
+    sel: Option<&Range<usize>>,
+    sel_bg: Hsla,
+    cur_line: usize,
+    cur_col: usize,
+    cur_bg: Hsla,
+    cur_fg: Hsla,
+) -> AnyElement {
+    let mut text = e.line(i);
+    let line = div().h(line_h).whitespace_nowrap();
+    let nchars = text.chars().count();
+    let line_start = e.rope.line_to_char(i);
+    let has_nl = i + 1 < n_lines;
+    let line_end = line_start + nchars + has_nl as usize;
 
-                if let Some(r) = &sel {
-                    // the slice of this line that falls inside the selection
-                    // (its end may reach past `nchars` to cover the newline)
-                    let a = r.start.max(line_start);
-                    let b = r.end.min(line_end);
-                    if a < b {
-                        let cs = a - line_start; // start col (≤ nchars)
-                        let mut ce = b - line_start; // end col (nchars+1 ⇒ the \n)
-                        let bstart = col_byte(&text, cs);
-                        if ce > nchars {
-                            // selection runs through the line break — paint a
-                            // trailing cell so the wrap reads as selected
-                            text.push(' ');
-                            ce = nchars + 1;
-                        }
-                        let bend = col_byte(&text, ce);
-                        if bend > bstart {
-                            highlights.push((
-                                bstart..bend,
-                                HighlightStyle {
-                                    background_color: Some(sel_bg),
-                                    ..Default::default()
-                                },
-                            ));
-                        }
-                    }
-                } else if i == cur_line {
-                    // no selection → inverse-video block cursor on this line
-                    let (start, end) = match text.char_indices().nth(cur_col) {
-                        Some((b, c)) => (b, b + c.len_utf8()),
-                        None => {
-                            text.push(' ');
-                            (text.len() - 1, text.len())
-                        }
-                    };
-                    highlights.push((
-                        start..end,
-                        HighlightStyle {
-                            color: Some(th.bg),
-                            background_color: Some(th.accent),
-                            ..Default::default()
-                        },
-                    ));
-                }
+    let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
 
-                if highlights.is_empty() {
-                    return if text.is_empty() {
-                        line.into_any_element()
-                    } else {
-                        line.child(SharedString::from(text)).into_any_element()
-                    };
-                }
-                line.child(StyledText::new(SharedString::from(text)).with_highlights(highlights))
-                    .into_any_element()
-            })
-            .collect()
+    if let Some(r) = sel {
+        // the slice of this line that falls inside the selection
+        // (its end may reach past `nchars` to cover the newline)
+        let a = r.start.max(line_start);
+        let b = r.end.min(line_end);
+        if a < b {
+            let cs = a - line_start; // start col (≤ nchars)
+            let mut ce = b - line_start; // end col (nchars+1 ⇒ the \n)
+            let bstart = col_byte(&text, cs);
+            if ce > nchars {
+                // selection runs through the line break — paint a trailing cell
+                // so the wrap reads as selected
+                text.push(' ');
+                ce = nchars + 1;
+            }
+            let bend = col_byte(&text, ce);
+            if bend > bstart {
+                highlights.push((
+                    bstart..bend,
+                    HighlightStyle {
+                        background_color: Some(sel_bg),
+                        ..Default::default()
+                    },
+                ));
+            }
+        }
+    } else if i == cur_line {
+        // no selection → inverse-video block cursor on this line
+        let (start, end) = match text.char_indices().nth(cur_col) {
+            Some((b, c)) => (b, b + c.len_utf8()),
+            None => {
+                text.push(' ');
+                (text.len() - 1, text.len())
+            }
+        };
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                color: Some(cur_fg),
+                background_color: Some(cur_bg),
+                ..Default::default()
+            },
+        ));
     }
+
+    if highlights.is_empty() {
+        return if text.is_empty() {
+            line.into_any_element()
+        } else {
+            line.child(SharedString::from(text)).into_any_element()
+        };
+    }
+    line.child(StyledText::new(SharedString::from(text)).with_highlights(highlights))
+        .into_any_element()
 }
 
 /// Byte offset of the `col`-th char in `s` (its full length if past the last).
@@ -2079,12 +2122,14 @@ fn darken(mut c: gpui::Hsla, f: f32) -> gpui::Hsla {
 }
 
 impl Render for MdPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // let the fx ticker quiet a backgrounded window's animation repaints
+        self.win_active = window.is_window_active();
         // resolve the appearance ONCE per frame, then derive both the composed
-        // theme and the text scale from it (avoids a second resolve+clone).
+        // theme (memoized) and the text scale from it (avoids a second resolve).
         let r = self.resolved(cx);
         let sc = theme::font_scale() * r.grade.text_scale;
-        let th = Arc::new(appearance::compose(cx, &r));
+        let th = self.theme_for(cx, &r);
         let editing = self.mode == Mode::Source;
         let line_count = self.doc.read(cx).editor.line_count();
         let rail_count = if editing { line_count } else { 99 };
@@ -2094,7 +2139,7 @@ impl Render for MdPane {
         // render_node in main.rs, which has the Workspace context the drag needs.
         // rail numbers ride the tube's scroll offset so they stay aligned
         let rail_offset = if editing {
-            f32::from(self.scroll.offset().y)
+            f32::from(self.scroll_offset().y)
         } else {
             0.
         };
@@ -2124,20 +2169,43 @@ impl Render for MdPane {
             ));
 
         let content: AnyElement = match self.mode {
-            Mode::Source => div()
-                .id("src")
-                .size_full()
-                .overflow_y_scroll()
-                .overflow_x_hidden()
+            // VIRTUALIZED: a uniform_list builds only the visible line elements
+            // each frame (overscan included), so paint cost tracks the viewport,
+            // not the file size. Items are LINE_H tall to stay in sync with the
+            // rail, and px_4/py_3 reproduce PAD_X/PAD_Y for the click→cursor math.
+            Mode::Source => {
+                let doc = self.doc.clone();
+                let line_h = px(LINE_H * sc);
+                let sel_bg = th.accent.alpha(0.30);
+                let cur_bg = th.accent;
+                let cur_fg = th.bg;
+                uniform_list("src", line_count, move |range, _win, cx| {
+                    let doc = doc.read(cx);
+                    let e = &doc.editor;
+                    let n = e.line_count();
+                    let (cur_line, cur_col) = e.line_col();
+                    let sel = e.selection();
+                    range
+                        .map(|i| {
+                            if i >= n {
+                                return div().h(line_h).into_any_element();
+                            }
+                            source_line_el(
+                                e, i, n, line_h, sel.as_ref(), sel_bg, cur_line, cur_col, cur_bg,
+                                cur_fg,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
                 .track_scroll(&self.scroll)
+                .size_full()
+                .overflow_x_hidden()
                 .px_4()
                 .py_3()
                 .text_size(px(13. * sc))
                 .whitespace_nowrap()
-                .flex()
-                .flex_col()
-                .children(self.source_lines(&th, cx))
-                .into_any_element(),
+                .into_any_element()
+            }
             Mode::Comment => div()
                 .id("cmt")
                 .size_full()

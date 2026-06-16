@@ -497,6 +497,9 @@ struct Workspace {
     pane_seed: u64,
     finder: Option<FinderState>,
     index: finder::FileIndex,
+    /// Last-seen window-active state (set in render). The frame-jiggle ticker
+    /// skips repainting the chrome while this window is backgrounded.
+    win_active: bool,
 }
 
 impl Workspace {
@@ -523,6 +526,7 @@ impl Workspace {
             pane_seed: 0xD0C5,
             finder: None,
             index: finder::FileIndex::spawn(),
+            win_active: true,
         };
         // remember last session's outer + most-recent inner look (best guess),
         // falling back to the paper/hacker default on first run.
@@ -587,6 +591,7 @@ impl Workspace {
             pane_seed: 0xD0C5,
             finder: None,
             index: finder::FileIndex::spawn(),
+            win_active: true,
         };
         ws.rebuild_outer(cx);
         ws.tabs.push(Tab {
@@ -626,6 +631,7 @@ impl Workspace {
             pane_seed: 0xD0C5,
             finder: None,
             index: finder::FileIndex::spawn(),
+            win_active: true,
         };
         // adopt the remembered look, but DON'T restore tabs or start autosave
         let saved = session::load();
@@ -661,7 +667,8 @@ impl Workspace {
             // — break so the task ends instead of spinning on a dead entity.
             if this
                 .update(cx, |ws: &mut Workspace, cx| {
-                    if ws.jiggle.tick() {
+                    // advance the jiggle, but only repaint a foreground window
+                    if ws.jiggle.tick() && ws.win_active {
                         cx.notify();
                     }
                 })
@@ -3180,6 +3187,8 @@ impl Render for Workspace {
                 stamp(*t0, "FIRST FRAME painted (interactive)");
             }
         }
+        // let the frame-jiggle ticker quiet this window's chrome when backgrounded
+        self.win_active = window.is_window_active();
         self.reap(window, cx);
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // flatten the glass while an overlay is up so its hit-testing is honest

@@ -1839,7 +1839,6 @@ impl MdPane {
             .child(panel);
         Some(overlay.into_any_element())
     }
-
 }
 
 /// Build ONE source line's element: the selection band drawn across it, or —
@@ -2191,7 +2190,15 @@ impl Render for MdPane {
                                 return div().h(line_h).into_any_element();
                             }
                             source_line_el(
-                                e, i, n, line_h, sel.as_ref(), sel_bg, cur_line, cur_col, cur_bg,
+                                e,
+                                i,
+                                n,
+                                line_h,
+                                sel.as_ref(),
+                                sel_bg,
+                                cur_line,
+                                cur_col,
+                                cur_bg,
                                 cur_fg,
                             )
                         })

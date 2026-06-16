@@ -535,9 +535,16 @@ impl Workspace {
         }
         // publish the outer look to the global panes resolve against
         ws.rebuild_outer(cx);
-        // the opening pane: SOURCE mode — right-click → open → start typing
+        // the opening pane: a launched FILE opens RENDERED (Preview) so you SEE
+        // it — headings, tables, the lot — and Ctrl+E drops to source to edit.
+        // A blank scratch (no path) opens in SOURCE so you can start typing.
         let di = ws.default_inner.clone();
-        let pane = ws.make_pane(Mode::Source, di, cx);
+        let open_mode = if ws.doc.read(cx).path.is_some() {
+            Mode::Preview
+        } else {
+            Mode::Source
+        };
+        let pane = ws.make_pane(open_mode, di, cx);
         let doc = ws.doc.clone();
         ws.tabs.push(Tab {
             root: Node::Leaf(pane),
@@ -1832,8 +1839,16 @@ impl Workspace {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             let leaves: Vec<Entity<MdPane>> = leaves.into_iter().cloned().collect();
+            // a single-pane tab shows the opened file RENDERED (Preview) — Ctrl+E
+            // to edit; a split (source+preview) keeps each pane's existing mode.
+            let render_open = leaves.len() == 1;
             for p in leaves {
-                p.update(cx, |pane, cx| pane.set_doc(new_doc.clone(), cx));
+                p.update(cx, |pane, cx| {
+                    pane.set_doc(new_doc.clone(), cx);
+                    if render_open && pane.mode == Mode::Source {
+                        pane.mode = Mode::Preview;
+                    }
+                });
             }
         }
         // refocus the pane the finder targeted, so you can type immediately

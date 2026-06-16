@@ -649,16 +649,26 @@ impl Workspace {
     }
 
     /// The frame-wide jiggle ticker (shared by `new` and `from_pane`).
+    /// MUST stop when its window's Workspace is dropped — otherwise every
+    /// opened-then-closed window (scratch, tear-off, doc) leaves an orphan
+    /// 60ms task waking forever, and idle CPU climbs over a session.
     fn start_jiggle(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(60))
                 .await;
-            let _ = this.update(cx, |ws: &mut Workspace, cx| {
-                if ws.jiggle.tick() {
-                    cx.notify();
-                }
-            });
+            // `this` is a weak handle; once the Workspace is gone, update errors
+            // — break so the task ends instead of spinning on a dead entity.
+            if this
+                .update(cx, |ws: &mut Workspace, cx| {
+                    if ws.jiggle.tick() {
+                        cx.notify();
+                    }
+                })
+                .is_err()
+            {
+                break;
+            }
         })
         .detach();
     }

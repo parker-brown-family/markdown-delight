@@ -168,7 +168,7 @@
 
   <header class="hero">
     <div class="wrap">
-      <div class="eyebrow">GPU-native · Rust · Linux · v0.2.0</div>
+      <div class="eyebrow">GPU-native · Rust · Linux · <span class="rel-ver">v0.2.0</span></div>
       <h1>markdown-<span class="u">delight</span></h1>
       <p class="tag">A tabful, tiling Linux Markdown editor that opens any <code>.md</code> into a gorgeous, themeable, native-snappy surface — not a flat gray pane.</p>
       <p class="sub">Rust end-to-end: <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">gpui</a> renders every pixel on the GPU and <a href="https://github.com/kivikakk/comrak">comrak</a> turns CommonMark+GFM into native elements — <b>no webview</b>. Live source ▸ preview, a Google-Docs-style <b>comment mode</b>, tiling multi-pane with per-pane themes, and a real CRT barrel warp. Set it as your system default <code>.md</code> handler.</p>
@@ -305,7 +305,7 @@ cargo build --release &amp;&amp; ../scripts/make-default.sh</pre>
       <div>
         <div class="brand">▸ markdown-delight<span class="blink">_</span></div>
         <div style="margin-top:8px">MIT source + binary · AppImage · Linux only</div>
-        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">comrak</span> <span class="pill">crt</span> <span class="pill" id="rel-ver">v0.2.0</span></div>
+        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">comrak</span> <span class="pill">crt</span> <span class="pill rel-ver">v0.2.0</span></div>
       </div>
       <div>
         <div><a href="https://github.com/parker-brown-family/markdown-delight">GitHub repository ↗</a></div>
@@ -354,18 +354,19 @@ cargo build --release &amp;&amp; ../scripts/make-default.sh</pre>
       });
     })();
 
-    // Live version: show the latest GitHub release tag in the footer pill and
-    // point "Release notes" at that exact tag. Falls back to the static label
-    // and /releases/latest if the API is unreachable or rate-limited.
+    // Live version: stamp the latest GitHub release tag into every .rel-ver
+    // element (hero eyebrow + footer pill) and point "Release notes" at that
+    // exact tag. Falls back to the static labels and /releases/latest if the
+    // API is unreachable or rate-limited.
     (function () {
-      var ver = document.getElementById('rel-ver');
+      var vers = document.querySelectorAll('.rel-ver');
       var notes = document.getElementById('rel-notes');
-      if (!ver && !notes) return;
+      if (!vers.length && !notes) return;
       fetch('https://api.github.com/repos/parker-brown-family/markdown-delight/releases/latest', {
         headers: { Accept: 'application/vnd.github+json' }
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
         if (!d || !d.tag_name) return;
-        if (ver) ver.textContent = d.tag_name;
+        for (var i = 0; i < vers.length; i++) vers[i].textContent = d.tag_name;
         if (notes && d.html_url) notes.href = d.html_url;
       }).catch(function () { /* keep static fallback */ });
     })();

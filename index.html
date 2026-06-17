@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- Defense in depth: no third-party frames/plugins can load, images self-only,
        fonts limited to Google. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://api.github.com; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <title>markdown-delight — GPU-native Linux Markdown editor</title>
   <meta name="description" content="A tabful, tiling Linux Markdown editor in Rust (gpui + comrak): native render with no webview, a Google-Docs-style comment mode, hot-reloadable CRT themes, set as your default .md handler. MIT-licensed, downloadable AppImage." />
 
@@ -285,7 +285,7 @@ cargo build --release &amp;&amp; ../scripts/make-default.sh</pre>
       <p>gpui is consumed from a pinned Zed checkout carrying the <code>td-crt-pass</code> renderer patch (the per-pane barrel warp) as a sibling <code>zed-upstream/</code> directory. Full prerequisites, the system dependencies, and troubleshooting are in <a href="https://github.com/parker-brown-family/markdown-delight/blob/main/BUILDING.md">BUILDING.md ↗</a>; the contributor bar and clean-room rule are in <a href="https://github.com/parker-brown-family/markdown-delight/blob/main/CONTRIBUTING.md">CONTRIBUTING.md ↗</a>.</p>
       <p><b>Keys:</b> <kbd>Ctrl+E</kbd> source↔preview · <kbd>Ctrl+S</kbd> save · <kbd>Ctrl+Shift+C</kbd> comment mode · <kbd>Ctrl+Shift+A</kbd> all comments · <kbd>Ctrl+Alt+R</kbd>/<kbd>Ctrl+Alt+D</kbd> split · <kbd>Ctrl+Shift+T</kbd> new tab.</p>
       <div class="cta" style="justify-content:flex-start">
-        <a class="btn primary" href="https://github.com/parker-brown-family/markdown-delight/releases/tag/v0.2.0">Release notes</a>
+        <a class="btn primary" id="rel-notes" href="https://github.com/parker-brown-family/markdown-delight/releases/latest">Release notes</a>
         <a class="btn" href="https://github.com/parker-brown-family/markdown-delight">Source ↗</a>
       </div>
     </div>
@@ -305,7 +305,7 @@ cargo build --release &amp;&amp; ../scripts/make-default.sh</pre>
       <div>
         <div class="brand">▸ markdown-delight<span class="blink">_</span></div>
         <div style="margin-top:8px">MIT source + binary · AppImage · Linux only</div>
-        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">comrak</span> <span class="pill">crt</span> <span class="pill">v0.2.0</span></div>
+        <div style="margin-top:10px"><span class="pill">rust</span> <span class="pill">gpui</span> <span class="pill">comrak</span> <span class="pill">crt</span> <span class="pill" id="rel-ver">v0.2.0</span></div>
       </div>
       <div>
         <div><a href="https://github.com/parker-brown-family/markdown-delight">GitHub repository ↗</a></div>
@@ -352,6 +352,22 @@ cargo build --release &amp;&amp; ../scripts/make-default.sh</pre>
         else if (e.key === 'ArrowRight') show(idx + 1);
         else if (e.key === 'ArrowLeft') show(idx - 1);
       });
+    })();
+
+    // Live version: show the latest GitHub release tag in the footer pill and
+    // point "Release notes" at that exact tag. Falls back to the static label
+    // and /releases/latest if the API is unreachable or rate-limited.
+    (function () {
+      var ver = document.getElementById('rel-ver');
+      var notes = document.getElementById('rel-notes');
+      if (!ver && !notes) return;
+      fetch('https://api.github.com/repos/parker-brown-family/markdown-delight/releases/latest', {
+        headers: { Accept: 'application/vnd.github+json' }
+      }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (!d || !d.tag_name) return;
+        if (ver) ver.textContent = d.tag_name;
+        if (notes && d.html_url) notes.href = d.html_url;
+      }).catch(function () { /* keep static fallback */ });
     })();
   </script>
 </body>

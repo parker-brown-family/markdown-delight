@@ -430,6 +430,9 @@ impl MdPane {
                 Mode::Source => Mode::Preview,
                 _ => Mode::Source,
             };
+            // a selection belongs to the view it was made in
+            self.sel = None;
+            self.sel_dragging = false;
             cx.notify();
             return;
         }
@@ -447,6 +450,11 @@ impl MdPane {
         // mode — it reads the doc + its comment store)
         if m.control && m.shift && !m.alt && key == "e" {
             self.copy_with_comments(cx);
+            return;
+        }
+        // reading view: ctrl+c copies the per-paragraph drag-selection
+        if self.mode == Mode::Preview && m.control && !m.shift && !m.alt && key == "c" {
+            self.copy_preview_selection(cx);
             return;
         }
         // only the source editor consumes typing / selection keys
@@ -761,6 +769,43 @@ impl MdPane {
         } else {
             // a plain click (no drag) comments on the whole block
             self.open_block_comment(sel.block, window, cx);
+        }
+    }
+
+    /// Reading view: finish a drag-selection by publishing it to the X11 PRIMARY
+    /// selection (so middle-click paste works); the highlight stays put.
+    fn end_preview_sel(&mut self, cx: &mut Context<Self>) {
+        if !self.sel_dragging {
+            return;
+        }
+        self.sel_dragging = false;
+        if let Some(text) = self.preview_selected_text(cx) {
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
+        cx.notify();
+    }
+
+    /// The text of the current per-paragraph preview selection, if any.
+    fn preview_selected_text(&self, cx: &gpui::App) -> Option<String> {
+        let sel = self.sel.as_ref()?;
+        let (s, e) = sel.range();
+        if e <= s {
+            return None;
+        }
+        let doc = self.doc.read(cx);
+        let block = doc.blocks.get(sel.block)?;
+        let (text, _) = render::paragraph_text(block)?;
+        let s = s.min(text.len());
+        let e = e.min(text.len());
+        let out = text.get(s..e)?.to_string();
+        (!out.trim().is_empty()).then_some(out)
+    }
+
+    /// Ctrl+C in the reading view → copy the selection to clipboard + PRIMARY.
+    fn copy_preview_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = self.preview_selected_text(cx) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
         }
     }
 
@@ -1157,6 +1202,85 @@ impl MdPane {
                             })
                             .text_color(th.bg)
                             .child(SharedString::from(format!("● {}", r.badge))),
+                    );
+                }
+                wrap.into_any_element()
+            })
+            .collect();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(children)
+            .into_any_element()
+    }
+
+    /// The reading view, with per-paragraph drag-to-select-and-copy. Mirrors
+    /// `comment_document`'s text-layout capture (so a selection can be hit-tested
+    /// and highlighted) minus all comment chrome: paragraphs render as
+    /// `StyledText`, every other block stays read-only via `block_element`.
+    fn preview_document(&mut self, th: &theme::Theme, cx: &mut Context<Self>) -> AnyElement {
+        let sel = self.sel.clone();
+
+        struct Row {
+            el: AnyElement,
+            layout: Option<TextLayout>,
+        }
+
+        // Phase 1 — own the rows (drops the doc borrow before the &mut Context
+        // that cx.listener needs).
+        let rows: Vec<Row> = {
+            let doc = self.doc.read(cx);
+            doc.blocks
+                .iter()
+                .enumerate()
+                .map(|(i, b)| {
+                    if let Some((text, base_runs)) = render::paragraph_text(b) {
+                        let mut spans: Vec<(Range<usize>, SpanKind)> = Vec::new();
+                        if let Some(s) = &sel {
+                            let (a, e) = s.range();
+                            if s.block == i && e > a {
+                                spans.push((a..e, SpanKind::Active));
+                            }
+                        }
+                        let runs = merge_runs(text.len(), &base_runs, &spans, th);
+                        let styled = StyledText::new(text).with_highlights(runs);
+                        let layout = styled.layout().clone();
+                        Row {
+                            el: styled.into_any_element(),
+                            layout: Some(layout),
+                        }
+                    } else {
+                        Row {
+                            el: render::block_element(b),
+                            layout: None,
+                        }
+                    }
+                })
+                .collect()
+        };
+
+        // Phase 2 — record this frame's paragraph layouts; arm per-block select.
+        self.block_layouts.clear();
+        let children: Vec<AnyElement> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let selectable = r.layout.is_some();
+                if let Some(l) = r.layout {
+                    self.block_layouts.insert(i, l);
+                }
+                let mut wrap = div()
+                    .id(SharedString::from(format!("pblock-{i}")))
+                    .relative()
+                    .child(r.el);
+                if selectable {
+                    wrap = wrap.cursor_text().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |pane, ev: &MouseDownEvent, window, cx| {
+                            pane.begin_sel(i, ev.position, window, cx);
+                        }),
                     );
                 }
                 wrap.into_any_element()
@@ -2237,7 +2361,15 @@ impl Render for MdPane {
                 .overflow_x_hidden()
                 .px_5()
                 .py_3()
-                .child(render::document(&self.doc.read(cx).blocks))
+                // drag inside a paragraph to select text; release → X11 PRIMARY
+                .on_mouse_move(cx.listener(|pane, ev: &MouseMoveEvent, _w, cx| {
+                    pane.update_sel(ev.position, cx);
+                }))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|pane, _: &MouseUpEvent, _w, cx| pane.end_preview_sel(cx)),
+                )
+                .child(self.preview_document(&th, cx))
                 .into_any_element(),
         };
 

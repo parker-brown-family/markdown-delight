@@ -17,7 +17,6 @@ use std::ops::Range;
 // hacker palette tokens (src/styles/theme.css)
 const SURFACE: u32 = 0x08100d;
 const SURFACE_ALT: u32 = 0x0e1a14;
-const TEXT: u32 = 0x86efac;
 const ACCENT: u32 = 0x22c55e;
 const ACCENT_STRONG: u32 = 0x4ade80;
 const FAINT: u32 = 0x14401f;
@@ -341,18 +340,8 @@ fn item_marker<'a>(item: &'a AstNode<'a>, ordered: bool, n: &mut usize) -> Strin
 
 /* ================= Block → GPUI elements (per frame) ================= */
 
-pub fn document(blocks: &[Block]) -> AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .text_color(rgb(TEXT))
-        .children(blocks.iter().map(element))
-        .into_any_element()
-}
-
-/// Render a single block — used by comment mode to wrap each block in its own
-/// clickable, commentable container.
+/// Render a single block — used by comment and preview mode to wrap each block
+/// in its own clickable / selectable container.
 pub fn block_element(block: &Block) -> AnyElement {
     element(block)
 }

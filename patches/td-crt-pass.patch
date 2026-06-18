@@ -1,10 +1,10 @@
 diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
 new file mode 100644
-index 0000000..ae12dd1
+index 0000000..9e81d0a
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/crt_pass.wgsl
-@@ -0,0 +1,82 @@
-+// terminal-delight CRT post-pass v2: PER-RECT barrel distortion.
+@@ -0,0 +1,174 @@
++// terminal-delight CRT post-pass v3: PER-RECT barrel distortion + FOCUS blur.
 +// The app registers up to 8 "tube" rectangles (terminal content areas, in
 +// physical px). Pixels inside a rect warp in rect-local space; everything
 +// else (bezel, buttons, chrome) passes through untouched, so hit-testing
@@ -12,11 +12,23 @@ index 0000000..ae12dd1
 +// glare.yz), so a pane on a bent theme bows even when the window theme is
 +// flat, and a flat pane stays flat next to a bent neighbour. rects + glare
 +// come from gpui_wgpu::set_crt_rects_tubes; k.z carries the rect count.
++//
++// FOCUS frosted glass: while the 👓 reading modal is up, warp is suppressed
++// (rect_count → 0) and `focus_params.x` (blur radius, physical px) goes
++// positive. The backdrop OUTSIDE the panel rect is blurred with a golden-angle
++// disk + per-pixel dither (creamy, no banding); the panel itself stays pristine
++// sharp. focus_rect = panel (x,y,w,h px); focus_params = (radius, feather,
++// tint, corner_radius). Fed by gpui_wgpu::set_focus_blur. The pass is modal-
++// gated, so the blur cost is paid only while you're reading.
 +
 +struct CrtParams {
 +    k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
 +    rects: array<vec4<f32>, 8>,    // x, y, w, h (physical px)
 +    glare: array<vec4<f32>, 8>,    // strength, k1, k2, _pad (per-rect curvature)
++    focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
++    focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
++    crawl: array<vec4<f32>, 8>,    // per-rect Star-Wars crawl: enabled(0/1), a (top
++                                   // width ratio), D (depth = h_bottom/h_top), _pad
 +}
 +
 +@group(0) @binding(0) var<uniform> crt: CrtParams;
@@ -37,6 +49,18 @@ index 0000000..ae12dd1
 +    return out;
 +}
 +
++// Signed distance to a rounded box, then a smoothstep feather across the edge.
++// Returns 1.0 fully INSIDE the panel, 0.0 fully OUTSIDE, smooth between — so the
++// sharp region follows the panel's rounded corners instead of a hard rectangle.
++fn panel_mask(p: vec2<f32>, rect: vec4<f32>, corner: f32, feather: f32) -> f32 {
++    let center = rect.xy + rect.zw * 0.5;
++    let half = rect.zw * 0.5;
++    let q = abs(p - center) - half + vec2<f32>(corner, corner);
++    let sdf = min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - corner;
++    let f = max(feather, 1e-4);
++    return 1.0 - smoothstep(-f * 0.5, f * 0.5, sdf);
++}
++
 +@fragment
 +fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
 +    let dims = vec2<f32>(textureDimensions(screen_tex));
@@ -50,13 +74,40 @@ index 0000000..ae12dd1
 +            // a bent neighbour has turned the pass on, and vice versa.
 +            let k1 = crt.glare[i].y;
 +            let k2 = crt.glare[i].z;
-+            // a genuinely flat tube (a no-bend pane) passes straight through,
-+            // so it looks identical with or without the pass — no vignette, no
-+            // glare, exact hit-testing.
-+            if (abs(k1) < 0.0005 && abs(k2) < 0.0005) {
++            let crawl_on = crt.crawl[i].x > 0.5;
++            // a genuinely flat tube (a no-bend, non-crawling pane) passes straight
++            // through, so it looks identical with or without the pass — no
++            // vignette, no glare, exact hit-testing. A crawling pane never takes
++            // this path even when barrel-flat, so its perspective still applies.
++            if (abs(k1) < 0.0005 && abs(k2) < 0.0005 && !crawl_on) {
 +                return textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
 +            }
-+            let local = (p - r.xy) / r.zw;
++            var local = (p - r.xy) / r.zw;
++            // ---- crawl perspective pre-map (Star-Wars text recede) ----
++            // Re-aim the sample so the flat content reads as a plane tilting away
++            // toward the top: rows bunch + narrow with distance. We invert the
++            // perspective-correct foreshortening v = ln(1+(D-1)tc)/ln(D), so
++            // tc(vb) = (D^vb - 1)/(D - 1), with vb measured from the near (bottom)
++            // edge. Sides taper from full width at the bottom to `a` at the top.
++            // Out-of-trapezoid samples letterbox to black (the starfield bars),
++            // which still pick up the glass glare/vignette below.
++            if (crawl_on) {
++                let a = crt.crawl[i].y;
++                let depth = crt.crawl[i].z;
++                let vb = 1.0 - local.y;            // 0 = bottom/near, 1 = top/far
++                var tc: f32;
++                if (abs(depth - 1.0) < 1e-3) {
++                    tc = vb;                       // no foreshortening → linear
++                } else {
++                    tc = (pow(depth, vb) - 1.0) / (depth - 1.0);
++                }
++                let width = (1.0 - tc) + a * tc;   // 1 at bottom → a at top
++                let cx = 0.5 + (local.x - 0.5) / width;
++                if (cx < 0.0 || cx > 1.0) {
++                    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
++                }
++                local = vec2<f32>(cx, 1.0 - tc);
++            }
 +            let c = local - vec2<f32>(0.5, 0.5);
 +            let r2 = dot(c, c);
 +            let f = 1.0 + k1 * r2 + k2 * r2 * r2;
@@ -83,14 +134,55 @@ index 0000000..ae12dd1
 +            return vec4<f32>(tube * inb, 1.0);
 +        }
 +    }
++
++    // ---- FOCUS frosted-glass backdrop (active while the reading modal is up) ----
++    let fb_radius = crt.focus_params.x;
++    if (fb_radius > 0.5) {
++        let sharp = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
++        let m = panel_mask(p, crt.focus_rect, crt.focus_params.w, crt.focus_params.y);
++        if (m > 0.999) {
++            // inside the panel: pristine, skip the blur taps entirely
++            return vec4<f32>(sharp.rgb, 1.0);
++        }
++        // Golden-angle (Vogel) disk blur with a per-pixel dither rotation. The
++        // spiral spreads samples evenly; rotating per pixel trades banding for
++        // fine dithered noise that the dim backdrop swallows — reads as smooth,
++        // creamy frosted glass rather than a cheap N-tap disk.
++        let TAPS = 32;
++        let GOLDEN = 2.3999632;
++        let ign = fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
++        let rot = ign * 6.2831853;
++        var acc = vec3<f32>(0.0);
++        var wsum = 0.0;
++        for (var t = 0; t < TAPS; t = t + 1) {
++            let ft = f32(t) + 0.5;
++            let rr = sqrt(ft / f32(TAPS));               // denser toward the centre
++            let ang = ft * GOLDEN + rot;
++            let off = vec2<f32>(cos(ang), sin(ang)) * rr * fb_radius;
++            let suv = clamp((p + off) / dims, vec2<f32>(0.0), vec2<f32>(1.0));
++            let w = exp(-rr * rr * 1.8);                 // gaussian-ish falloff
++            acc = acc + textureSampleLevel(screen_tex, screen_samp, suv, 0.0).rgb * w;
++            wsum = wsum + w;
++        }
++        var frost = acc / max(wsum, 1e-4);
++        // Frosted glass: a faint cool-white lift + a touch of extra depth-darken,
++        // both scaled by the tint knob, so the backdrop reads as glass, not just
++        // an out-of-focus photo.
++        let tint = crt.focus_params.z;
++        frost = mix(frost, vec3<f32>(0.80, 0.85, 0.93), 0.06 * tint);
++        frost = frost * (1.0 - 0.10 * tint);
++        // composite: sharp inside the panel, frosted outside, feathered across.
++        return vec4<f32>(mix(frost, sharp.rgb, m), 1.0);
++    }
++
 +    let col = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
 +    return vec4<f32>(col.rgb, col.a);
 +}
 diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
-index 452c3c0..58e1c1d 100644
+index 452c3c0..bc912f8 100644
 --- a/crates/gpui_wgpu/src/gpui_wgpu.rs
 +++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
-@@ -7,4 +7,8 @@ pub use cosmic_text_system::*;
+@@ -7,4 +7,9 @@ pub use cosmic_text_system::*;
  pub use wgpu;
  pub use wgpu_atlas::*;
  pub use wgpu_context::*;
@@ -98,12 +190,13 @@ index 452c3c0..58e1c1d 100644
 +pub use wgpu_renderer::set_crt_rects;
 +pub use wgpu_renderer::set_crt_rects_tubes;
 +pub use wgpu_renderer::set_crt_rects_with_glare;
++pub use wgpu_renderer::set_focus_blur;
  pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index 08f30dc..ace3728 100644
+index 08f30dc..68f4975 100644
 --- a/crates/gpui_wgpu/src/wgpu_renderer.rs
 +++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
-@@ -94,6 +94,220 @@ struct WgpuPipelines {
+@@ -94,6 +94,264 @@ struct WgpuPipelines {
      surfaces: wgpu::RenderPipeline,
  }
  
@@ -124,9 +217,14 @@ index 08f30dc..ace3728 100644
 +    )
 +}
 +
-+// (rect[x,y,w,h], glare, k1, k2) — curvature is per rect so each tube bends
-+// on its own theme regardless of the window-wide dial.
-+type CrtRect = ([f32; 4], f32, f32, f32);
++// (rect[x,y,w,h], glare, k1, k2, crawl[enabled, a, depth]) — curvature AND crawl
++// perspective are per rect so each tube bends/recedes on its own theme regardless
++// of the window-wide dial. crawl[0]=1 enables the perspective pre-map; a is the
++// top-edge width ratio, depth the bottom:top text-height ratio (see crt_pass.wgsl).
++type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3]);
++
++/// Crawl identity (disabled): no perspective, no taper, flat depth.
++const CRAWL_IDENTITY: [f32; 3] = [0.0, 1.0, 1.0];
 +
 +static CRT_RECTS: std::sync::Mutex<Vec<CrtRect>> = std::sync::Mutex::new(Vec::new());
 +
@@ -134,7 +232,12 @@ index 08f30dc..ace3728 100644
 +pub fn set_crt_rects(rects: &[[f32; 4]]) {
 +    let mut guard = CRT_RECTS.lock().unwrap();
 +    guard.clear();
-+    guard.extend(rects.iter().take(8).map(|rect| (*rect, 0.0, 0.0, 0.0)));
++    guard.extend(
++        rects
++            .iter()
++            .take(8)
++            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY)),
++    );
 +}
 +
 +/// Replace the set of warped rectangles with a per-rect top-left glass glare.
@@ -145,38 +248,70 @@ index 08f30dc..ace3728 100644
 +        rects
 +            .iter()
 +            .take(8)
-+            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0)),
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY)),
 +    );
 +}
 +
 +/// Replace the set of warped rectangles with a per-rect glare AND per-rect
 +/// barrel curvature (k1, k2). This is what the per-pane warp registry uses:
 +/// each tube carries the curvature of its own theme.
-+pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32)]) {
++pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32, [f32; 3])]) {
 +    let mut guard = CRT_RECTS.lock().unwrap();
 +    guard.clear();
 +    guard.extend(
 +        rects
 +            .iter()
 +            .take(8)
-+            .map(|(rect, glare, k1, k2)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2)),
++            .map(|(rect, glare, k1, k2, crawl)| (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl)),
 +    );
 +}
 +
-+/// Returns (rects, packed glare+curvature [glare, k1, k2, _], count, max|k|).
-+/// The max curvature magnitude lets the caller turn the pass on when any tube
-+/// bends, even if the global dial is flat.
-+fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
++/// Returns (rects, packed glare+curvature [glare, k1, k2, _], crawl [enabled, a,
++/// depth, _], count, max|k|). The max curvature magnitude lets the caller turn
++/// the pass on when any tube bends, even if the global dial is flat — and a tube
++/// with crawl on also forces the pass active (`max_k` is bumped) so the
++/// perspective is applied even on an otherwise-flat pane.
++fn crt_rects() -> ([[f32; 4]; 8], [[f32; 4]; 8], [[f32; 4]; 8], u32, f32) {
 +    let guard = CRT_RECTS.lock().unwrap();
 +    let mut rects = [[0.0f32; 4]; 8];
 +    let mut glare = [[0.0f32; 4]; 8];
++    let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 8];
 +    let mut max_k = 0.0f32;
-+    for (i, (r, g, k1, k2)) in guard.iter().take(8).enumerate() {
++    for (i, (r, g, k1, k2, c)) in guard.iter().take(8).enumerate() {
 +        rects[i] = *r;
 +        glare[i] = [*g, *k1, *k2, 0.0];
++        crawl[i] = [c[0], c[1], c[2], 0.0];
 +        max_k = max_k.max(k1.abs()).max(k2.abs());
++        // A crawling tube must keep the pass live even when it's barrel-flat.
++        if c[0] > 0.5 {
++            max_k = max_k.max(1.0);
++        }
 +    }
-+    (rects, glare, guard.len().min(8) as u32, max_k)
++    (rects, glare, crawl, guard.len().min(8) as u32, max_k)
++}
++
++// ---- terminal-delight FOCUS frosted-glass backdrop ----
++// While the 👓 reading modal is up, the panel rect (physical px) stays sharp and
++// everything outside it is blurred by the same CRT post-pass. Stored as
++// [x, y, w, h, blur_radius, feather, tint, corner_radius]; a radius <= 0.5
++// disables the effect (and gates the whole pass off when warp is also idle).
++static FOCUS_BLUR: std::sync::Mutex<[f32; 8]> = std::sync::Mutex::new([0.0; 8]);
++
++/// Set the FOCUS modal backdrop blur. `rect` is the panel (physical px) that
++/// stays sharp; everything outside it is frosted. `radius`/`feather`/`corner`
++/// are physical px, `tint` is 0..1. Pass radius <= 0.5 to disable.
++pub fn set_focus_blur(rect: [f32; 4], radius: f32, feather: f32, tint: f32, corner: f32) {
++    let mut g = FOCUS_BLUR.lock().unwrap();
++    *g = [
++        rect[0], rect[1], rect[2], rect[3], radius, feather, tint, corner,
++    ];
++}
++
++/// Returns (rect, radius, feather, tint, corner, active).
++fn focus_blur() -> ([f32; 4], f32, f32, f32, f32, bool) {
++    let g = FOCUS_BLUR.lock().unwrap();
++    let active = g[4] > 0.5;
++    ([g[0], g[1], g[2], g[3]], g[4], g[5], g[6], g[7], active)
 +}
 +
 +/// Lazily-built resources for the CRT post pass.
@@ -275,7 +410,9 @@ index 08f30dc..ace3728 100644
 +        });
 +        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 +            label: Some("crt_pass_params"),
-+            size: 16 + 8 * 16 + 8 * 16,
++            // k(16) + rects(8*16) + glare(8*16) + focus_rect(16) + focus_params(16)
++            // + crawl(8*16)
++            size: 16 + 8 * 16 + 8 * 16 + 32 + 8 * 16,
 +            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 +            mapped_at_creation: false,
 +        });
@@ -324,7 +461,7 @@ index 08f30dc..ace3728 100644
  struct WgpuBindGroupLayouts {
      globals: wgpu::BindGroupLayout,
      instances: wgpu::BindGroupLayout,
-@@ -158,6 +372,7 @@ pub struct WgpuRenderer {
+@@ -158,6 +416,7 @@ pub struct WgpuRenderer {
      device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
      surface_configured: bool,
      needs_redraw: bool,
@@ -332,7 +469,7 @@ index 08f30dc..ace3728 100644
  }
  
  impl WgpuRenderer {
-@@ -488,6 +703,7 @@ impl WgpuRenderer {
+@@ -488,6 +747,7 @@ impl WgpuRenderer {
              device_lost: context.device_lost_flag(),
              surface_configured: true,
              needs_redraw: false,
@@ -340,16 +477,19 @@ index 08f30dc..ace3728 100644
          })
      }
  
-@@ -1151,6 +1367,30 @@ impl WgpuRenderer {
+@@ -1151,6 +1411,33 @@ impl WgpuRenderer {
              .texture
              .create_view(&wgpu::TextureViewDescriptor::default());
  
 +        // td-crt-pass: when warp is on, the scene renders offscreen and a
 +        // final barrel-distortion pass writes the swapchain.
 +        let (crt_k1, crt_k2) = crt_warp();
-+        let (crt_rect_arr, crt_glare_arr, crt_rect_count, crt_max_rect_k) = crt_rects();
-+        let crt_active = crt_rect_count > 0
-+            && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005);
++        let (crt_rect_arr, crt_glare_arr, crt_crawl_arr, crt_rect_count, crt_max_rect_k) =
++            crt_rects();
++        let (fb_rect, fb_radius, fb_feather, fb_tint, fb_corner, fb_active) = focus_blur();
++        let crt_active = (crt_rect_count > 0
++            && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005))
++            || fb_active;
 +        let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
 +            if self.crt.is_none() {
 +                let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
@@ -371,7 +511,7 @@ index 08f30dc..ace3728 100644
          let gamma_params = GammaParams {
              gamma_ratios: self.rendering_params.gamma_ratios,
              grayscale_enhanced_contrast: self.rendering_params.grayscale_enhanced_contrast,
-@@ -1213,7 +1453,7 @@ impl WgpuRenderer {
+@@ -1213,7 +1500,7 @@ impl WgpuRenderer {
                  let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                      label: Some("main_pass"),
                      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -380,7 +520,7 @@ index 08f30dc..ace3728 100644
                          resolve_target: None,
                          ops: wgpu::Operations {
                              load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-@@ -1252,7 +1492,7 @@ impl WgpuRenderer {
+@@ -1252,7 +1539,7 @@ impl WgpuRenderer {
                              pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                  label: Some("main_pass_continued"),
                                  color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -389,7 +529,7 @@ index 08f30dc..ace3728 100644
                                      resolve_target: None,
                                      ops: wgpu::Operations {
                                          load: wgpu::LoadOp::Load,
-@@ -1327,6 +1567,66 @@ impl WgpuRenderer {
+@@ -1327,6 +1614,79 @@ impl WgpuRenderer {
                  continue;
              }
  
@@ -397,7 +537,10 @@ index 08f30dc..ace3728 100644
 +            if let (true, Some(scene_view)) = (crt_active, crt_scene_view.as_ref()) {
 +                if let Some(crt) = self.crt.as_ref() {
 +                    let resources = self.resources();
-+                    let mut params = [0.0f32; 4 + 32 + 32];
++                    // k(4) + rects(32) + glare(32) + focus_rect(4) + focus_params(4)
++                    // + crawl(32) = 108 floats. crawl appended last so the existing
++                    // field offsets are unchanged.
++                    let mut params = [0.0f32; 4 + 32 + 32 + 8 + 32];
 +                    params[0] = crt_k1;
 +                    params[1] = crt_k2;
 +                    params[2] = crt_rect_count as f32;
@@ -406,6 +549,16 @@ index 08f30dc..ace3728 100644
 +                    }
 +                    for (i, g) in crt_glare_arr.iter().enumerate() {
 +                        params[4 + 32 + i * 4..4 + 32 + i * 4 + 4].copy_from_slice(g);
++                    }
++                    // focus_rect (panel, physical px) + focus_params
++                    params[68..72].copy_from_slice(&fb_rect);
++                    params[72] = fb_radius;
++                    params[73] = fb_feather;
++                    params[74] = fb_tint;
++                    params[75] = fb_corner;
++                    // crawl[enabled, a, depth, _] per rect
++                    for (i, c) in crt_crawl_arr.iter().enumerate() {
++                        params[76 + i * 4..76 + i * 4 + 4].copy_from_slice(c);
 +                    }
 +                    resources.queue.write_buffer(
 +                        &crt.params_buffer,

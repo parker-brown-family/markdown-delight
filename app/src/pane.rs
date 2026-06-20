@@ -657,8 +657,40 @@ impl MdPane {
         cx.notify();
     }
 
-    pub fn is_commenting(&self) -> bool {
-        self.mode == Mode::Comment
+    /// One big button cycles this pane through its three surfaces:
+    /// edit (Source) → read (Preview) → comment (Comment) → edit … Mirrors the
+    /// per-mode keys (Ctrl+E source/preview, Ctrl+Shift+C comment) in one click.
+    pub fn cycle_mode(&mut self, cx: &mut Context<Self>) {
+        // a selection belongs to the view it was made in
+        self.sel = None;
+        self.sel_dragging = false;
+        let next = match self.mode {
+            Mode::Source => Mode::Preview,
+            Mode::Preview => Mode::Comment,
+            Mode::Comment => Mode::Source,
+        };
+        // leaving comment mode tears down its review UI
+        if self.mode == Mode::Comment {
+            self.comment_ui = None;
+            self.show_browser = false;
+        }
+        // entering comment mode loads the review surface
+        if next == Mode::Comment {
+            self.prev_mode = self.mode;
+            self.comment_ui = None;
+            self.doc.update(cx, |doc, _| doc.ensure_comments_loaded());
+        }
+        self.mode = next;
+        cx.notify();
+    }
+
+    /// Glyph + label + accent-fill flag for the big header mode button.
+    pub fn mode_badge(&self) -> (&'static str, &'static str) {
+        match self.mode {
+            Mode::Source => ("✎", "EDIT"),
+            Mode::Preview => ("◉", "READ"),
+            Mode::Comment => ("▣", "COMMENT"),
+        }
     }
 
     /// Open the device panel on the i-th top-level block (whole-block comment).

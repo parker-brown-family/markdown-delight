@@ -3142,14 +3142,14 @@ fn render_node(
             // each pane renders in its own (optional) theme; chrome follows it
             let pth = e.read(cx).effective_theme(cx);
             let editing = e.read(cx).is_editing();
-            let commenting = e.read(cx).is_commenting();
             let title = e.read(cx).title(cx);
             let theme_name = e.read(cx).theme_name(cx);
             let status = e.read(cx).status_str(cx);
 
             // ---- header: drag handle + theme chip + pop-out ----
-            let e_cmt = e.clone();
             let e_browser = e.clone();
+            let e_cycle = e.clone();
+            let (mode_icon, mode_label) = e.read(cx).mode_badge();
             let ghost_label = title.clone();
             let ghost_accent = pth.accent;
             let ghost_frame = pth.frame_bg;
@@ -3206,25 +3206,33 @@ fn render_node(
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        // comment-mode toggle — turns THIS pane into the read-only
-                        // review surface (click a block to comment).
+                        // BIG mode toggle — one click cycles edit → read →
+                        // comment → edit. The headline control: an accent-filled
+                        // pill that always names the pane's current surface.
                         .child(
                             div()
+                                .id("mode-toggle")
                                 .cursor_pointer()
-                                .px_1()
-                                .rounded_sm()
-                                .text_color(if commenting {
-                                    pth.accent
-                                } else {
-                                    pth.frame_faint
-                                })
-                                .hover(|s| s.text_color(pth.accent))
-                                .child("▣ comment")
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .h(px(20.))
+                                .px_3()
+                                .rounded_md()
+                                .bg(pth.accent)
+                                .text_color(pth.bg)
+                                .text_size(px(11.5))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .hover(|s| s.bg(brighten(pth.accent, 1.25)))
+                                .child(SharedString::from(format!(
+                                    "{mode_icon} {mode_label}"
+                                )))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        e_cmt.update(cx, |pane, cx| pane.toggle_comment_mode(cx));
+                                        e_cycle.update(cx, |pane, cx| pane.cycle_mode(cx));
                                     }),
                                 ),
                         )

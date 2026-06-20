@@ -53,8 +53,18 @@ pub fn register_tube(rect: [f32; 4], glare: f32, k1: f32, k2: f32) {
     push(&rects);
 }
 
+/// Crawl identity: perspective disabled (flat depth). Tubes carry no crawl yet,
+/// so we pass this for every tube — the renderer treats it as a no-op.
+const CRAWL_IDENTITY: [f32; 3] = [0.0, 1.0, 1.0];
+
 #[allow(unused_variables)]
 fn push(rects: &[Tube]) {
     #[cfg(target_os = "linux")]
-    gpui_wgpu::set_crt_rects_tubes(rects);
+    {
+        let tubes: Vec<_> = rects
+            .iter()
+            .map(|&(rect, glare, k1, k2)| (rect, glare, k1, k2, CRAWL_IDENTITY))
+            .collect();
+        gpui_wgpu::set_crt_rects_tubes(&tubes);
+    }
 }

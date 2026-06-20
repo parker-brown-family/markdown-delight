@@ -229,6 +229,10 @@ enum DropZone {
 enum CloseRequest {
     Tab(usize),
     Pane(EntityId),
+    /// close every tab except this one
+    Others(usize),
+    /// close every tab to the right of this one
+    ToRight(usize),
 }
 
 /// Which scope the open theme tray is editing — the whole window (the global
@@ -470,6 +474,8 @@ struct Workspace {
     active: usize,
     focus_handle: gpui::FocusHandle,
     renaming: Option<(usize, String)>,
+    /// Open IDE-style tab context menu: (tab index, window-space anchor point).
+    tab_menu: Option<(usize, gpui::Point<Pixels>)>,
     jiggle: FrameJiggle,
     last_action: Instant,
     drag_split: Option<u64>,
@@ -510,6 +516,7 @@ impl Workspace {
             active: 0,
             focus_handle: cx.focus_handle(),
             renaming: None,
+            tab_menu: None,
             jiggle: FrameJiggle::new(),
             last_action: Instant::now() - Duration::from_secs(1),
             drag_split: None,
@@ -539,16 +546,12 @@ impl Workspace {
         }
         // publish the outer look to the global panes resolve against
         ws.rebuild_outer(cx);
-        // the opening pane: a launched FILE opens RENDERED (Preview) so you SEE
-        // it — headings, tables, the lot — and Ctrl+E drops to source to edit.
-        // A blank scratch (no path) opens in SOURCE so you can start typing.
+        // the opening pane: a doc opens in SOURCE so you can edit immediately —
+        // that's the natural expectation when you click a .md open. Ctrl+E flips
+        // to the rendered Preview when you want to SEE it (headings, tables, the
+        // lot). A blank scratch (no path) likewise opens in SOURCE.
         let di = ws.default_inner.clone();
-        let open_mode = if ws.doc.read(cx).path.is_some() {
-            Mode::Preview
-        } else {
-            Mode::Source
-        };
-        let pane = ws.make_pane(open_mode, di, cx);
+        let pane = ws.make_pane(Mode::Source, di, cx);
         let doc = ws.doc.clone();
         ws.tabs.push(Tab {
             root: Node::Leaf(pane),
@@ -574,6 +577,7 @@ impl Workspace {
             active: 0,
             focus_handle: cx.focus_handle(),
             renaming: None,
+            tab_menu: None,
             jiggle: FrameJiggle::new(),
             last_action: Instant::now() - Duration::from_secs(1),
             drag_split: None,
@@ -616,6 +620,7 @@ impl Workspace {
             active: 0,
             focus_handle: cx.focus_handle(),
             renaming: None,
+            tab_menu: None,
             jiggle: FrameJiggle::new(),
             last_action: Instant::now() - Duration::from_secs(1),
             drag_split: None,
@@ -1338,6 +1343,122 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Tab indices affected by a close request (the anchor is excluded).
+    fn close_victims(&self, req: CloseRequest) -> Vec<usize> {
+        match req {
+            CloseRequest::Others(i) => (0..self.tabs.len()).filter(|&j| j != i).collect(),
+            CloseRequest::ToRight(i) => ((i + 1)..self.tabs.len()).collect(),
+            CloseRequest::Tab(i) => vec![i],
+            CloseRequest::Pane(_) => vec![],
+        }
+    }
+
+    /// Close a set of tabs at once, keeping `anchor` alive and active. Removes
+    /// from the back so earlier indices stay valid; refills a blank if emptied.
+    fn close_tabs(
+        &mut self,
+        victims: Vec<usize>,
+        anchor: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut vs: Vec<usize> = victims
+            .into_iter()
+            .filter(|&j| j < self.tabs.len() && j != anchor)
+            .collect();
+        vs.sort_unstable();
+        vs.dedup();
+        if vs.is_empty() {
+            return;
+        }
+        let removed_below = vs.iter().filter(|&&j| j < anchor).count();
+        for &j in vs.iter().rev() {
+            self.tabs.remove(j);
+        }
+        if self.tabs.is_empty() {
+            let pane = self.make_pane(Mode::Source, self.default_inner.clone(), cx);
+            let doc = pane.read(cx).doc.clone();
+            self.tabs.push(Tab {
+                root: Node::Leaf(pane),
+                name: None,
+                doc,
+            });
+        }
+        self.active = anchor
+            .saturating_sub(removed_below)
+            .min(self.tabs.len() - 1);
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// Dirty docs that would be lost across a victim set (drives the modal list).
+    fn victims_dirty_docs(&self, victims: &[usize], cx: &Context<Self>) -> Vec<Entity<Doc>> {
+        let mut out: Vec<Entity<Doc>> = Vec::new();
+        for &j in victims {
+            for d in self.tab_dirty_docs(j, cx) {
+                if !out.iter().any(|e| e.entity_id() == d.entity_id()) {
+                    out.push(d);
+                }
+            }
+        }
+        out
+    }
+
+    /// Right-click menu → "Close others", guarded by the unsaved-changes modal.
+    fn request_close_others(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.debounced() {
+            return;
+        }
+        let victims = self.close_victims(CloseRequest::Others(i));
+        if victims.iter().any(|&j| self.tab_would_lose_unsaved(j, cx)) {
+            self.confirm_close = Some(CloseRequest::Others(i));
+            cx.notify();
+        } else {
+            self.close_tabs(victims, i, window, cx);
+        }
+    }
+
+    /// Right-click menu → "Close to the right", guarded by the unsaved modal.
+    fn request_close_right(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.debounced() {
+            return;
+        }
+        let victims = self.close_victims(CloseRequest::ToRight(i));
+        if victims.iter().any(|&j| self.tab_would_lose_unsaved(j, cx)) {
+            self.confirm_close = Some(CloseRequest::ToRight(i));
+            cx.notify();
+        } else {
+            self.close_tabs(victims, i, window, cx);
+        }
+    }
+
+    /// Right-click menu → "Open containing folder": reveal the file's directory
+    /// in the system file manager (xdg-open), so you can drag-and-drop it into an
+    /// upload form. No-op for an unsaved scratch tab (no path on disk yet).
+    fn open_containing_folder(&self, i: usize, cx: &Context<Self>) {
+        let Some(tab) = self.tabs.get(i) else {
+            return;
+        };
+        let Some(path) = tab.doc.read(cx).path.clone() else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+        }
+    }
+
+    fn open_tab_menu(&mut self, i: usize, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        self.renaming = None;
+        self.tab_menu = Some((i, at));
+        cx.notify();
+    }
+
+    fn close_tab_menu(&mut self, cx: &mut Context<Self>) {
+        if self.tab_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
     /// Close a specific pane by id (its ✕). reap prunes the tree / empty tabs.
     fn close_pane_now(&mut self, id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(p) = self.find_pane(id) {
@@ -1383,7 +1504,7 @@ impl Workspace {
             self.pane_seed = self.pane_seed.wrapping_mul(31).wrapping_add(17);
             let seed = self.pane_seed;
             let inner = self.default_inner.clone();
-            let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Preview, seed, inner, cx));
+            let pane = cx.new(|cx| MdPane::new(doc.clone(), Mode::Source, seed, inner, cx));
             let name = e.name.or_else(|| Some(truncate_label(&label, 40)));
             self.tabs.push(Tab {
                 root: Node::Leaf(pane),
@@ -1640,6 +1761,9 @@ impl Workspace {
                 .find_pane(id)
                 .map(|p| vec![p.read(cx).doc.clone()])
                 .unwrap_or_default(),
+            CloseRequest::Others(_) | CloseRequest::ToRight(_) => {
+                self.victims_dirty_docs(&self.close_victims(req), cx)
+            }
         };
         for d in docs {
             d.update(cx, |doc, cx| {
@@ -1655,6 +1779,9 @@ impl Workspace {
         match req {
             CloseRequest::Tab(i) => self.close_tab_now(i, window, cx),
             CloseRequest::Pane(id) => self.close_pane_now(id, window, cx),
+            CloseRequest::Others(i) | CloseRequest::ToRight(i) => {
+                self.close_tabs(self.close_victims(req), i, window, cx)
+            }
         }
         cx.notify();
     }
@@ -1667,6 +1794,9 @@ impl Workspace {
         match req {
             CloseRequest::Tab(i) => self.close_tab_now(i, window, cx),
             CloseRequest::Pane(id) => self.close_pane_now(id, window, cx),
+            CloseRequest::Others(i) | CloseRequest::ToRight(i) => {
+                self.close_tabs(self.close_victims(req), i, window, cx)
+            }
         }
         cx.notify();
     }
@@ -1709,6 +1839,24 @@ impl Workspace {
                     .unwrap_or_else(|| theme::theme(cx));
                 let names = self
                     .tab_dirty_docs(i, cx)
+                    .iter()
+                    .map(|d| d.read(cx).label.to_string())
+                    .collect();
+                (th, names)
+            }
+            CloseRequest::Others(i) | CloseRequest::ToRight(i) => {
+                // theme of the kept (anchor) tab; names of every victim's dirty docs
+                let th = self
+                    .tabs
+                    .get(i)
+                    .and_then(|t| {
+                        let mut l = vec![];
+                        t.root.leaves(&mut l);
+                        l.first().map(|p| p.read(cx).effective_theme(cx))
+                    })
+                    .unwrap_or_else(|| theme::theme(cx));
+                let names = self
+                    .victims_dirty_docs(&self.close_victims(req), cx)
                     .iter()
                     .map(|d| d.read(cx).label.to_string())
                     .collect();
@@ -1856,15 +2004,11 @@ impl Workspace {
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             let leaves: Vec<Entity<MdPane>> = leaves.into_iter().cloned().collect();
-            // a single-pane tab shows the opened file RENDERED (Preview) — Ctrl+E
-            // to edit; a split (source+preview) keeps each pane's existing mode.
-            let render_open = leaves.len() == 1;
+            // an opened file lands in SOURCE so you can edit it right away —
+            // Ctrl+E flips to the rendered Preview. Each pane keeps its own mode.
             for p in leaves {
                 p.update(cx, |pane, cx| {
                     pane.set_doc(new_doc.clone(), cx);
-                    if render_open && pane.mode == Mode::Source {
-                        pane.mode = Mode::Preview;
-                    }
                 });
             }
         }
@@ -1947,6 +2091,11 @@ impl Workspace {
         // Esc dismisses the unsaved-changes modal (buttons handle save/discard)
         if self.confirm_close.is_some() && ks.key.as_str() == "escape" {
             self.confirm_cancel(cx);
+            return;
+        }
+        // Escape closes an open tab context menu before anything else
+        if self.tab_menu.is_some() && ks.key.as_str() == "escape" {
+            self.close_tab_menu(cx);
             return;
         }
         // the finder owns the keyboard while open
@@ -2404,6 +2553,8 @@ fn confirm_overlay(
     let what = match req {
         CloseRequest::Tab(_) => "this tab",
         CloseRequest::Pane(_) => "this pane",
+        CloseRequest::Others(_) => "the other tabs",
+        CloseRequest::ToRight(_) => "the tabs to the right",
     };
     let list = if names.is_empty() {
         "unsaved changes".to_string()
@@ -2563,6 +2714,151 @@ fn seed_swatch(color: Option<Hsla>, active: bool) -> gpui::Div {
     } else {
         b.border_color(hsla(0., 0., 0., 0.45))
     }
+}
+
+/// IDE-style right-click tab menu, anchored at the cursor and themed against
+/// the outer bar. Greyed rows (disabled) carry no listener. A full-window scrim
+/// dismisses it on any click-away; selecting an item closes it too.
+#[allow(clippy::too_many_arguments)]
+fn tab_menu_overlay(
+    i: usize,
+    at: gpui::Point<Pixels>,
+    many: bool,
+    has_right: bool,
+    has_path: bool,
+    th: &theme::Theme,
+    window: &Window,
+    cx: &mut Context<Workspace>,
+) -> gpui::Div {
+    const PANEL_W: f32 = 200.;
+    const PANEL_H_EST: f32 = 198.;
+    let surf = darken(th.bg, 0.6);
+    let acc = th.accent;
+    let txt = th.text;
+    let faint = th.frame_faint;
+
+    // one menu row; `lit=false` renders it greyed + inert
+    let row = move |label: &str, lit: bool| {
+        let mut d = div()
+            .px(px(13.))
+            .py(px(5.))
+            .text_size(px(13.))
+            .text_color(if lit { txt } else { faint.alpha(0.5) });
+        if lit {
+            d = d.cursor_pointer().hover(move |s| s.bg(acc.alpha(0.22)));
+        }
+        d.child(label.to_string())
+    };
+
+    let vp = window.viewport_size();
+    let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
+    let left = f32::from(at.x).clamp(8., (vw - PANEL_W - 8.).max(8.));
+    let top = (f32::from(at.y) + 6.).clamp(8., (vh - PANEL_H_EST - 8.).max(8.));
+
+    let panel = div()
+        .absolute()
+        .left(px(left))
+        .top(px(top))
+        .w(px(PANEL_W))
+        .py(px(4.))
+        .bg(surf)
+        .border_1()
+        .border_color(acc.alpha(0.55))
+        .rounded(px(8.))
+        .shadow(vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.55),
+            offset: point(px(3.), px(5.)),
+            blur_radius: px(16.),
+            spread_radius: px(0.),
+            inset: false,
+        }])
+        .font_family(th.font_family.clone())
+        // a click inside the panel must not reach the dismiss scrim
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(row("✎ Rename", true).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                let seed = ws
+                    .tabs
+                    .get(i)
+                    .and_then(|t| t.name.clone())
+                    .unwrap_or_default();
+                ws.tab_menu = None;
+                ws.renaming = Some((i, seed));
+                window.focus(&ws.focus_handle, cx);
+                cx.notify();
+            }),
+        ))
+        .child({
+            let r = row("📂 Open containing folder", has_path);
+            if has_path {
+                r.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
+                        ws.tab_menu = None;
+                        ws.open_containing_folder(i, cx);
+                        cx.notify();
+                    }),
+                )
+            } else {
+                r
+            }
+        })
+        .child(div().h(px(1.)).my(px(3.)).bg(faint.alpha(0.4)))
+        .child(row("Close", true).on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                ws.tab_menu = None;
+                ws.request_close_tab(i, window, cx);
+            }),
+        ))
+        .child({
+            let r = row("Close others", many);
+            if many {
+                r.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.tab_menu = None;
+                        ws.request_close_others(i, window, cx);
+                    }),
+                )
+            } else {
+                r
+            }
+        })
+        .child({
+            let r = row("Close to the right", has_right);
+            if has_right {
+                r.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.tab_menu = None;
+                        ws.request_close_right(i, window, cx);
+                    }),
+                )
+            } else {
+                r
+            }
+        });
+
+    // full-window scrim: any click elsewhere dismisses the menu
+    div()
+        .absolute()
+        .inset_0()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_tab_menu(cx)),
+        )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| ws.close_tab_menu(cx)),
+        )
+        .child(panel)
 }
 
 /// The theme tray popover (ported from terminal-delight): a THEME row of icon
@@ -2846,14 +3142,14 @@ fn render_node(
             // each pane renders in its own (optional) theme; chrome follows it
             let pth = e.read(cx).effective_theme(cx);
             let editing = e.read(cx).is_editing();
-            let commenting = e.read(cx).is_commenting();
             let title = e.read(cx).title(cx);
             let theme_name = e.read(cx).theme_name(cx);
             let status = e.read(cx).status_str(cx);
 
             // ---- header: drag handle + theme chip + pop-out ----
-            let e_cmt = e.clone();
             let e_browser = e.clone();
+            let e_cycle = e.clone();
+            let (mode_icon, mode_label) = e.read(cx).mode_badge();
             let ghost_label = title.clone();
             let ghost_accent = pth.accent;
             let ghost_frame = pth.frame_bg;
@@ -2910,25 +3206,33 @@ fn render_node(
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        // comment-mode toggle — turns THIS pane into the read-only
-                        // review surface (click a block to comment).
+                        // BIG mode toggle — one click cycles edit → read →
+                        // comment → edit. The headline control: an accent-filled
+                        // pill that always names the pane's current surface.
                         .child(
                             div()
+                                .id("mode-toggle")
                                 .cursor_pointer()
-                                .px_1()
-                                .rounded_sm()
-                                .text_color(if commenting {
-                                    pth.accent
-                                } else {
-                                    pth.frame_faint
-                                })
-                                .hover(|s| s.text_color(pth.accent))
-                                .child("▣ comment")
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .h(px(20.))
+                                .px_3()
+                                .rounded_md()
+                                .bg(pth.accent)
+                                .text_color(pth.bg)
+                                .text_size(px(11.5))
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .hover(|s| s.bg(brighten(pth.accent, 1.25)))
+                                .child(SharedString::from(format!(
+                                    "{mode_icon} {mode_label}"
+                                )))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |_ws, _: &MouseDownEvent, _w, cx| {
                                         cx.stop_propagation();
-                                        e_cmt.update(cx, |pane, cx| pane.toggle_comment_mode(cx));
+                                        e_cycle.update(cx, |pane, cx| pane.cycle_mode(cx));
                                     }),
                                 ),
                         )
@@ -3193,7 +3497,9 @@ impl Render for Workspace {
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // flatten the glass while an overlay is up so its hit-testing is honest
                              // (the warp is a post-process; a panel over a bent tube would bow with it)
-        warp::set_suppressed(self.theme_menu.is_some() || self.confirm_close.is_some());
+        warp::set_suppressed(
+            self.theme_menu.is_some() || self.confirm_close.is_some() || self.tab_menu.is_some(),
+        );
         let th = theme::theme(cx);
         let bezel = darken(th.frame_bg, 0.85);
         let tab = &self.tabs[self.active];
@@ -3219,7 +3525,7 @@ impl Render for Workspace {
         let tab_count = self.tabs.len();
         let jiggle = self.jiggle.px;
 
-        // ---- tabs (right-click renames) ----
+        // ---- tabs (double-click / ✎ renames · right-click → context menu) ----
         let renaming = self.renaming.clone();
         let mut tab_strip = div().flex().flex_row().gap_1().items_center();
         for i in 0..tab_count {
@@ -3256,8 +3562,15 @@ impl Render for Workspace {
             } else {
                 th.frame_faint.alpha(0.7)
             };
+            let grp = SharedString::from(format!("tab-grp-{i}"));
+            let pencil_col = if is_active {
+                white().alpha(0.85)
+            } else {
+                th.frame_faint.alpha(0.8)
+            };
             tab_strip = tab_strip.child(
                 Self::bezel_btn(&th, &label, is_active)
+                    .group(grp.clone())
                     .flex()
                     .flex_row()
                     .items_center()
@@ -3269,20 +3582,49 @@ impl Render for Workspace {
                     .on_drop::<DraggedPane>(cx.listener(move |ws, d: &DraggedPane, window, cx| {
                         ws.move_pane_to_tab(d, i, window, cx)
                     }))
+                    // single click activates; double-click renames (file-manager gesture)
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            ws.activate_tab(i, window, cx)
+                        cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                            if ev.click_count >= 2 {
+                                let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                                ws.tab_menu = None;
+                                ws.renaming = Some((i, seed));
+                                window.focus(&ws.focus_handle, cx);
+                                cx.notify();
+                            } else {
+                                ws.activate_tab(i, window, cx);
+                            }
                         }),
                     )
+                    // right click opens the IDE-style tab menu at the cursor
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                            let seed = ws.tabs[i].name.clone().unwrap_or_default();
-                            ws.renaming = Some((i, seed));
-                            window.focus(&ws.focus_handle, cx);
-                            cx.notify();
+                        cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.open_tab_menu(i, ev.position, cx);
                         }),
+                    )
+                    // hover-revealed ✎ — invites a rename without spending width
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("tab-pencil-{i}")))
+                            .text_size(px(10.))
+                            .text_color(hsla(0., 0., 0., 0.))
+                            .group_hover(grp.clone(), move |s| s.text_color(pencil_col))
+                            .cursor_pointer()
+                            .child("✎")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    let seed = ws.tabs[i].name.clone().unwrap_or_default();
+                                    ws.tab_menu = None;
+                                    ws.renaming = Some((i, seed));
+                                    window.focus(&ws.focus_handle, cx);
+                                    cx.notify();
+                                }),
+                            ),
                     )
                     // unsaved-edits dot (notebooks / modified files)
                     .when(tab_dirty, |d| {
@@ -3600,6 +3942,17 @@ impl Render for Workspace {
             )
         });
 
+        // IDE-style right-click tab menu (close / close others / close right)
+        let tab_menu_el = self.tab_menu.map(|(i, at)| {
+            let many = self.tabs.len() > 1;
+            let has_right = i + 1 < self.tabs.len();
+            let has_path = self
+                .tabs
+                .get(i)
+                .is_some_and(|t| t.doc.read(cx).path.is_some());
+            tab_menu_overlay(i, at, many, has_right, has_path, &th, window, cx)
+        });
+
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key))
@@ -3656,6 +4009,7 @@ impl Render for Workspace {
             )
             .children(confirm.map(|(req, cth, names)| confirm_overlay(req, &cth, &names, cx)))
             .children(theme_tray)
+            .children(tab_menu_el)
     }
 }
 
